@@ -1,0 +1,23 @@
+{
+  "name": "planepacker",
+  "version": "0.0.1",
+  "description": "A rectangle packing layout engine, currently only supports images, scales and crops such as to optimize relative sizes and leaves no empty space",
+  "homepage": "https://github.com/joelangeway/planepacker",
+  "author": "Joe Langeway <joelangeway@gmail.com>",
+  "keywords": [
+  	"layout", "planepacker", "style", "joelangeway", "rectangle packing", "joe"
+  ],
+  "bugs": {
+    "url": "https://github.com/joelangeway/planepacker/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/joelangeway/planepacker.git"
+  },
+  "main": "./planepacker",
+  "dependencies": {
+  	"underscore": ">=1.4.4",
+  	"requirejs": ">=2.1.6",
+  	"amdefine": ">=0.0.5"
+  }
+}
