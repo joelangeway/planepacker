@@ -19,5 +19,9 @@
   	"underscore": ">=1.4.4",
   	"requirejs": ">=2.1.6",
   	"amdefine": ">=0.0.5"
+  },
+  "devDependencies": {
+    "jhaml": ">=0.0.14",
+    "less": ">=1.4.0"
   }
 }
