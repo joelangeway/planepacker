@@ -2,6 +2,8 @@
  * layouts.js
  */
 
+var window;
+
 define(['underscore', 'jquery'], function(_, $) {
 
 	var nextThingId = 1;
@@ -341,6 +343,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			sq: function(x) { 
 				return x * x; 
 			},
+			log: function() {
+				window && window.console && window.console.log.apply(window.console, arguments);
+			},
 			priceCrop: function(ething, size, place) {
 
 				return this.weights.crop * size.cost;
@@ -516,10 +521,17 @@ define(['underscore', 'jquery'], function(_, $) {
 				var mostThingPlaced = 0
 					, mostThingPlacedIter = 0
 					, nThings = this.things.length
+					, t0 = new Date().getTime()
+					, self = this
 					;
+				function beforeReturn(msg) {
+					var t1 = new Date().getTime();
+					self.log('packing took ' + (t1 - t0) + 'ms, msg: ' + msg)
+				}
 				for(var iter0 = 0; iter0 < maxIterations; iter0++) {
 					this.iterate();
 					if(this.nThingsPlaced == nThings) {
+						beforeReturn('success');
 						return true;
 					}
 					if(this.nThingsPlaced > mostThingPlaced) {
@@ -527,9 +539,11 @@ define(['underscore', 'jquery'], function(_, $) {
 						mostThingPlacedIter = iter0;
 					}
 					if(iter0 - mostThingPlacedIter > maxIterationsWithoutProgress) {
+						beforeReturn('failed for lack of progress')
 						return false;
 					}
 				}
+				beforeReturn('failed to converge after ' + maxIterations + ' iterations');
 				return false;
 			},
 			getPlacements: function() {

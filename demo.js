@@ -8,12 +8,12 @@ requirejs.config({
 	paths: {
 		jquery : 'http://ajax.googleapis.com/ajax/libs/jquery/1.10.0/jquery',
 		underscore: 'node_modules/underscore/underscore',
-		jhaml: 'node_modules/jhaml/jhaml'
+		jhaml: 'node_modules/jhaml/jhaml',
+		less: 'node_modules/less/dist/less-1.4.0'
 	}
 });
 
-
-require(['jhaml', 'planepacker', 'underscore', 'jquery'], function(Jhaml, PP, _, $) {
+require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml, PP, _, $) {
 	var jhaml = new Jhaml();
 	var images = null;
 	var apiBaseUrl = "http://joelangeway-env.elasticbeanstalk.com/imgsearch/api/search";
