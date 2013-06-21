@@ -515,17 +515,19 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			costToPBase: Math.pow(2.0, 1.0 / 1.0), //every 1 points of score is a factor of two in liklihood of placement 
 			scoreProtoPlacements: function(protoPlacements) {
-				var totP = 0.0, ppi, pp, r, ppn = protoPlacements.length, maxP = 0.0;
+				var totP = 0.0, ppi, pp, r, ppn = protoPlacements.length, maxScore = -1e50;
 				for(ppi = 0; ppi < ppn; ppi++) {
 					pp = protoPlacements[ppi];
 					pp.costs = this.scorePlacement(pp.ething, pp.size, pp.place);
 					pp.score = pp.costs.score;
-					pp.p = Math.pow(this.costToPBase, pp.score);
-					maxP = Math.max(pp.p);
+					maxScore = Math.max(maxScore, pp.score);
 				}
-				var minP = maxP / 1e6;
-				for(ppi = ppn - 1; ppi >= 0; ppi--) { 
-					var p = protoPlacements[ppi].p;
+				var minP = 1e-6;
+				for(ppi = ppn - 1; ppi >= 0; ppi--) {
+					var pp = protoPlacements[ppi]
+						, score = pp.score -= maxScore
+						, p = pp.p = Math.pow(this.costToPBase, pp.score)
+						;
 					if(p < minP) {
 						protoPlacements.splice(ppi, 1);
 					}
@@ -547,6 +549,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 				if(ppn == 1) {
 					return 0;
+				}
+				if(totP <= 0) {
+					throw new Error('Numerical stabilty error');	
 				}
 				do {
 					r = Math.random() * totP;
@@ -755,8 +760,8 @@ define(['underscore', 'jquery'], function(_, $) {
 			var scales = []
 				, cropWidth = nativeWidth - crops[1] - crops[3]
 				, cropHeight = nativeHeight  - crops[0] - crops[2]
-				, minAspectRatio = 0.667 * cropWidth / nativeHeight
-				, maxAspectRatio = 1.5 * nativeWidth / cropHeight
+				, minAspectRatio = 0.8 * cropWidth / nativeHeight
+				, maxAspectRatio = 1.25 * nativeWidth / cropHeight
 				;
 			function emit(w, h, width, height) {
 				return true;
