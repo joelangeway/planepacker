@@ -959,7 +959,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			check();
 		},
 		packRectangles: function(things, fieldWidth, goalFieldHeight) {
-			var field = new Layout.Field(fieldWidth, Math.floor(1.5 * goalFieldHeight))
+			var field = new Layout.Field(fieldWidth, Math.floor(1.5 * goalFieldHeight + this.maxLength))
 				, packing = new Layout.Packing(field, things, goalFieldHeight)
 				, maxIterPerItem = 200
 				, didItWork
@@ -1102,7 +1102,20 @@ define(['underscore', 'jquery'], function(_, $) {
 			});
 		},
 		layout: function($field, cb) {
+			if(cb === undefined) {
+				cb = $field;
+				$field = null;
+			}
+			if($field) {
+				this.$field = $field;
+			}
+			if(!this.$field) {
+				throw new Error('No layout field');
+			}
+			$field = this.$field;
 			var width = $field.width()
+				, _height = $field.height()
+				, height = _height >= this.pixelLength(this.minLength) ? _height : $(window).height()
 				, fieldWidth = this.gridLengthFloor(width)
 				, things = this.findThings($field)
 				, self = this
@@ -1112,7 +1125,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			
 			this.waitForThingsToBeReady(things, 30000, function() {
 				var nThings = things.length
-					, goalFieldHeight = self.estimateGridHeight(nThings, width)
+					, goalFieldHeight = self.estimateGridHeight(nThings, width, height)
 					;	
 				$field.removeClass(this.cssPrefix + this.cssWaitingForContent);
 				$field.addClass(this.cssPrefix + this.cssComputing);
@@ -1134,10 +1147,12 @@ define(['underscore', 'jquery'], function(_, $) {
 				cb.call($field, this);
 			});
 		},
-		estimateGridHeight: function(nThings, width) {
+		estimateGridHeight: function(nThings, width, height) {
 			//we want to average an area of at least 8 grid units per thing
-			var w = this.gridLengthFloor(width)
-				, h = Math.ceil(nThings * this.averageThingGridArea / w) 
+			var w = this.gridLengthFloor(width), minH = this.gridLengthFloor(height)
+				, avgLen = Math.min(w, Math.max( this.minLength * 1.5,  w / 6) )
+				, avgThingArea = avgLen * avgLen
+				, h = Math.max(minH, Math.ceil(nThings * avgThingArea / w))
 				;
 			return h;
 		}
