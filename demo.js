@@ -63,8 +63,9 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 	function drawImages() {
 		var $field = $('#field');
 		console.log('decorating image objects')
+		var rsp = parsedLocation.query.relsize;
 		_.each(images, function(image) { 
-			image.relativeSize = 5 + image.tokens.length;
+			image.relativeSize = rsp == '0' ? 1 : 5 + image.tokens.length;
 		});
 		console.log('drawing images markup');
 		$field.html(jhaml.templates.imageResults({images: images}));

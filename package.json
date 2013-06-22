@@ -1,6 +1,6 @@
 {
   "name": "planepacker",
-  "version": "0.0.4",
+  "version": "0.0.5",
   "description": "A rectangle packing layout engine, currently only supports images, scales and crops such as to optimize relative sizes and leaves no empty space",
   "homepage": "https://github.com/joelangeway/planepacker",
   "author": "Joe Langeway <joelangeway@gmail.com>",

@@ -291,9 +291,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				, crop: 3.0 //getting crop correct
 				, preserve: 2.0 //preserving the position of things when re-laying-out
 				, special: 10.0 //how much we care about special requests
-				, complexity: 3.0 //how hard do we try to keep the problem manageable
+				, complexity: 5.0 //how hard do we try to keep the problem manageable
 				, mix: 0.0 //how much do we care about not looking just like pinterest
-				, fail: 10.0 //how much do we avoid placements that previously failed to complete
+				, fail: 20.0 //how much do we avoid placements that previously failed to complete
 				, success : 10.0
 			};
 
