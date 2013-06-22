@@ -287,14 +287,14 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 1.0 //how much we care about getting relatvie sizes correct
+				size: 8.0 //how much we care about getting relatvie sizes correct
 				, crop: 3.0 //getting crop correct
 				, preserve: 2.0 //preserving the position of things when re-laying-out
 				, special: 10.0 //how much we care about special requests
 				, complexity: 5.0 //how hard do we try to keep the problem manageable
 				, mix: 0.0 //how much do we care about not looking just like pinterest
 				, fail: 20.0 //how much do we avoid placements that previously failed to complete
-				, success : 10.0
+				, success : 1.0
 			};
 
 			this.remainingRelativeSize = 0;
@@ -403,12 +403,17 @@ define(['underscore', 'jquery'], function(_, $) {
 				if(ething.sp) {
 					return this.weights.special * (sq(ething.sp.w - size.w) + sq(ething.sp.h - size.h));
 				}
-				else if(ething.pp) {
-					return this.weights.preserve * (sq(ething.pp.w - size.w) + sq(ething.pp.h - size.h));
-				}
+				// else if(ething.pp) {
+				// 	return this.weights.preserve * (sq(ething.pp.w - size.w) + sq(ething.pp.h - size.h));
+				// }
 				else {
-					var gridSizeGoal = fieldArea * thing.relativeSize / this.remainingRelativeSize;
-					return this.weights.size * sq(gridSizeGoal - size.w * size.h);
+					var avgThingArea =  fieldArea / this.things.length
+						, avgLength = Math.sqrt(avgThingArea)
+						, nThingsRemaining = this.things.length - this.nThingsPlaced
+						, avgRelativeSize = this.remainingRelativeSize / nThingsRemaining
+						, goalLength = thing.relativeSize * avgLength / avgRelativeSize
+						;
+					return this.weights.size * sq(goalLength - Math.min(size.w, size.h));
 				}
 			},
 			pricePosition: function(ething, size, place) {
@@ -597,7 +602,7 @@ define(['underscore', 'jquery'], function(_, $) {
 					if(thingId in uncoveredPlacements) {
 						feat.failureCount++;
 					} else {
-						feat.successCount++;
+						//feat.successCount++;
 					}
 					var ething = this.ethings[thingId];
 					ething.placed = false;
@@ -651,9 +656,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				this.packingReport = {};
 				function beforeReturn(msg) {
 					var t1 = new Date().getTime();
-					self.packingReport.duration = (t1 - t0) + 'ms';
+					self.packingReport.duration = (t1 - t0);
 					self.packingReport.iterations = iter0;
-					self.packingReport.iterationPerMs = (iter0 / (t1 - t0)).toFixed(3);
+					self.packingReport.iterationPerMs = iter0 / (t1 - t0);
 					self.packingReport.milestones = milestones;
 					self.packingReport.nClears = nClears;
 					self.packingReport.totThingsCleared = totThingsCleared;
@@ -707,7 +712,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 				var report = {};
 				_.chain(this.ethings)
-							.map(function(ething) { return ething.protoPlacement.costs; })
+							.pluck('protoPlacement')
+							.compact()
+							.pluck('costs')
 							.reduce(avgBag, {})
 							.each(function(tot, p) {
 								report[p] = { n: tot.n, 
@@ -742,14 +749,15 @@ define(['underscore', 'jquery'], function(_, $) {
 				return abv / Math.sqrt(av * bv);
 			},
 			measureSuccessRelativeSize: function() {
-				var ss = _.map(this.ethings, function(ething) {
-						return { relative: ething.thing.relativeSize, actual: ething.placement.w * ething.placement.h, ri: 0, ai: 0 };
-					});
+				var ss = _.compact( _.map(this.ethings, function(ething) {
+						return ething.placement && { relative: ething.thing.relativeSize, actual: Math.min(ething.placement.w, ething.placement.h), ri: 0, ai: 0 };
+					}));
 				function assignRank(list, vp, rp) {
-					var lastValue = false, lastRank = 0, rank = 0;
+					var lastValue = false, rank = 0;
 					_.chain(list).sortBy(vp).each(function(s, i) { 
 						if(s[vp] !== lastValue) {
 							rank++;
+							lastValue = s[vp];
 						}
 						s[rp] = rank;
 					});
@@ -763,8 +771,8 @@ define(['underscore', 'jquery'], function(_, $) {
 				report.costs = this.reportCosts();
 				var feats = _.values(this.featureCounts);
 				report.mostFrequentFeatures = _.sortBy(feats, function(f) { return 0 - f.successCount - f.failureCount; }).slice(0, 10);
-				report.mostSucceedingFeatures = _.sortBy(feats, function(f) { return 0 - f.successCount / (f.successCount + f.failureCount); }).slice(0, 10);
-				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - f.failureCount / (f.successCount + f.failureCount); }).slice(0, 10);
+				report.mostSucceedingFeatures = _.sortBy(feats, function(f) { return 0 - (f.successCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
+				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - (f.failureCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
 				
 				report.relativeSizeCorrelation = this.measureSuccessRelativeSize();
 

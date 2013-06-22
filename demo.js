@@ -84,8 +84,9 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				ww0 = ww1;
 			} else if(wt0 > 0 && wt0 + 1000 <= now ) {
 				console.log('calling planePack on resize');
-				$('#field').planePack(function() {
+				$('#field').planePack(function(layout) {
 					console.log('finished planePack on resize!');
+					console.log(JSON.stringify(layout.packing.report(), null, '   '));
 				});
 				wt0 = 0;
 			}
@@ -100,8 +101,9 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		} else {
 			var $field = $('#field');
 			console.log('calling planePack');
-			$field.planePack(function() {
+			$field.planePack(function(layout) {
 				console.log('finished planePack!');
+				console.log(JSON.stringify(layout.packing.report(), null, '   '));
 				startPolling();
 			});
 			console.log('called planePack');
@@ -116,6 +118,30 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		function loop(i) {
 			if(i >= n) {
 				console.log('Done with ' + n + ' profiling runs');
+				function stat(p) {
+					var rawValues = _.pluck(reports, p)
+						, values = _.filter(rawValues, function(v) { return v === +v && !isNaN(v); })
+						, n = values.length
+						, nans = rawValues.length - n
+						, ordered = _.sortBy(values, function(x) { return x;})
+						, median = (ordered[ Math.floor((n - 1) / 2) ] + ordered[ Math.ceil((n - 1) / 2) ]) / 2
+						, min = ordered[0]
+						, max = ordered[ ordered.length - 1]
+						, fsum = function(a) { return _.reduce(a, function(l, r) { return l + r; }, 0); }
+						, sum = fsum(ordered)
+						, sum2 = fsum(_.map(ordered, function(x) { return x * x; }))
+						, mean = sum / n
+						, variance = sum2 / n - mean * mean
+						, stddev = Math.sqrt(variance)
+						;
+					console.log('Stat: ' + p + ' ' + min + '  <  ' + median + ' ~ ' + mean + ' +- ' + stddev + '  <  ' + max + '   NANS: ' + nans);
+				}
+				stat('duration');
+				stat('iterations');
+				stat('iterationPerMs');
+				stat('nClears');
+				stat('relativeSizeCorrelation');
+
 				return;
 			}
 			$field.removeData('ppLayoutRoot');
