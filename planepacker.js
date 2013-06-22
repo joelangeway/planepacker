@@ -57,6 +57,17 @@ define(['underscore', 'jquery'], function(_, $) {
 				h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7)); //mix();
 				return h;
 			},
+			clear: function() {
+				for(var x = this.fW - 1; x >= 0; x--) {
+					this.lbs[x] = 0;
+					this.ubs[x] = this.fH;
+				}
+				for(var i = this.cells.length - 1; i >= 0; i--) {
+					this.cells[i] = null;
+				}
+				this.placements = {};
+				this.hash = 42589;
+			},
 			placeSlice: function(x, y0, y1) {
 				var lb = this.lbs[x], ub = this.ubs[x];
 
@@ -154,17 +165,14 @@ define(['underscore', 'jquery'], function(_, $) {
 					, places = []
 					, x1
 					;
-				function emit() {
-					places.push({x0: x0, x1: x1, w: x1 - x0, y0: y0, y1: y1, h: y1 - y0});
-				}
 				for(var x1 = x0 + 1; x1 <= this.fW; x1++) {
 					if(this.lbs[x1] != y0) {
-						emit();
+						places.push({x0: x0, x1: x1, w: x1 - x0, y0: y0, y1: y1, h: y1 - y0});
 						break;
 					}
 					var ub = this.ubs[x1];
 					if(ub < y1) {
-						emit();
+						places.push({x0: x0, x1: x1, w: x1 - x0, y0: y0, y1: y1, h: y1 - y0});
 						y1 = ub;
 					}
 				}
@@ -253,6 +261,19 @@ define(['underscore', 'jquery'], function(_, $) {
 					}
 				}
 				return m0 * m0 + m1 * m1;
+			},
+			getUncoveredPlacements: function() {
+				var uncovered = {};
+				for(var x = this.fW - 1; x >= 0; x--) {
+					var y = this.lbs[x] - 1
+						, p = y >= 0 && this.cells[x * this.fH + y]
+						;
+					p && (uncovered[p.thing.id] = p);
+				}
+				return uncovered;
+			},
+			getAllPlacements: function() {
+				return this.placements;
 			}
 		}
 		return LayoutField;
@@ -266,26 +287,31 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 4.0 //how much we care about getting relatvie sizes correct
-				, crop: 10.0 //getting crop correct
-				, preserve: 10.0 //preserving the position of things when re-laying-out
-				, special: 20.0 //how much we care about special requests
+				size: 0.1 //how much we care about getting relatvie sizes correct
+				, crop: 3.0 //getting crop correct
+				, preserve: 2.0 //preserving the position of things when re-laying-out
+				, special: 10.0 //how much we care about special requests
 				, complexity: 3.0 //how hard do we try to keep the problem manageable
 				, mix: 0.0 //how much do we care about not looking just like pinterest
-				, fail: 5.0 //how much do we avoid placements that previously failed to complete
+				, fail: 10.0 //how much do we avoid placements that previously failed to complete
+				, success : 10.0
 			};
 
 			this.remainingRelativeSize = 0;
 			this.remainingGridArea = field.fW * this.goalFieldHeight;
 			this.ethings = {}; //proxy for things by id that has extra state attatched, commented below where we populate
 			this.thingSizes = []; //tuples of thing and size ordered to optimize search stategy
-			this.fieldsClosed = {}; //set of all hashes of field, to keep from looping
 			this.maxWidth = 0;
 			this.nThingsPlaced = 0;
 
-			this.mcmcMode = true;
+			this.featureCounts = {}; //map of placement hashes to count of times a partial solution succeeses or failed when incorperating this placement
 
-			this.failCounts = {}; //map of placement hashes to count of times a partial solution failed when incorperating this placement
+			var samplePlaces = [
+				{x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1},
+				{x0: this.field.fW - 1, y0: 0, x1: this.field.fW, y1: 1, w: 1, h: 1},
+				{x0: 0, y0: this.goalFieldHeight - 1, x1: 1, y1: this.goalFieldHeight, w: 1, h: 1},
+				{x0: this.field.fW - 1, y0: this.goalFieldHeight - 1, x1: this.field.fW, y1: this.goalFieldHeight, w: 1, h: 1}
+			];
 
 			_.each(things, function(thing) {
 				
@@ -305,7 +331,12 @@ define(['underscore', 'jquery'], function(_, $) {
 
 				_.each(thing.sizes, function(size) {
 					this.maxWidth = Math.max(this.maxWidth, size.w, size.h);
-					this.thingSizes.push( { ething: ething, size: size } );
+					var sizeCost = this.priceSize(ething, size, samplePlaces[0]);
+					var cropCost = this.priceCrop(ething, size, samplePlaces[0]);
+					this.thingSizes.push( { 
+							ething: ething, size: size, 
+							sizeCost: sizeCost, cropCost: cropCost, sizeAndCropCost: sizeCost + cropCost 
+						} );
 				}, this);
 				thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
 			}, this);
@@ -317,12 +348,6 @@ define(['underscore', 'jquery'], function(_, $) {
 			// can call that a gain when we place the thing, that way we are eager 
 			// to make good placements instead of scornful of risky ones, otherwise
 			// we'd never be able to get something in its special spot
-			var samplePlaces = [
-				{x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1},
-				{x0: this.field.fW - 1, y0: 0, x1: this.field.fW, y1: 1, w: 1, h: 1},
-				{x0: 0, y0: this.goalFieldHeight - 1, x1: 1, y1: this.goalFieldHeight, w: 1, h: 1},
-				{x0: this.field.fW - 1, y0: this.goalFieldHeight - 1, x1: this.field.fW, y1: this.goalFieldHeight, w: 1, h: 1}
-			];
 			_.each(this.ethings, function(ething) {
 				var thing = ething.thing
 					, maxCropCost = 0.0
@@ -334,6 +359,20 @@ define(['underscore', 'jquery'], function(_, $) {
 					maxSizeCost = Math.max(maxSizeCost, this.priceSize(ething, size, samplePlaces[0]) );
 				}, this);
 				var sampleSize = thing.sizes[0];
+
+				if(ething.sp) {
+					ething.positionCostWeight = this.weights.special;
+					ething.positionCostCx = ething.sp.x0 + ething.sp.w / 2;
+					ething.positionCostCy = ething.sp.y0 + ething.sp.h / 2;
+				} else if(ething.pp) {
+					ething.positionCostWeight = this.weights.preserve;
+					ething.positionCostCx = ething.pp.x0 + ething.pp.w / 2;
+					ething.positionCostCy = ething.pp.y0 + ething.pp.h / 2;
+				} else {
+					ething.positionCostWeight = 0;
+					ething.positionCostCx = 0;
+					ething.positionCostCy = 0;
+				}
 				_.each(samplePlaces, function(place) {
 					maxPositionCost = Math.max(maxPositionCost, this.pricePosition(ething, sampleSize, place) );
 				}, this);
@@ -349,7 +388,6 @@ define(['underscore', 'jquery'], function(_, $) {
 				window && window.console && window.console.log.apply(window.console, arguments);
 			},
 			priceCrop: function(ething, size, place) {
-
 				return this.weights.crop * size.cost;
 			},
 			priceSize: function(ething, size, place) {
@@ -357,19 +395,15 @@ define(['underscore', 'jquery'], function(_, $) {
 					, fieldArea = this.field.fW * this.goalFieldHeight
 					, sq = this.sq
 					;
-				if(ething.sp && ething.sp.relativeSize) {
-					var gridSizeGoal = fieldArea * ething.sp.relativeSize / this.remainingRelativeSize;
-					return this.weights.special * Math.abs(gridSizeGoal - size.w * size.h); 
-				}
-				else if(ething.sp && ething.sp.w && ething.sp.h) {
-					return this.weights.special * Math.sqrt(sq(ething.sp.w - size.w) + sq(ething.sp.h - size.h));
+				if(ething.sp) {
+					return this.weights.special * (sq(ething.sp.w - size.w) + sq(ething.sp.h - size.h));
 				}
 				else if(ething.pp) {
-					return this.weights.preserve * Math.sqrt(sq(ething.pp.w - size.w) + sq(ething.pp.h - size.h));
+					return this.weights.preserve * (sq(ething.pp.w - size.w) + sq(ething.pp.h - size.h));
 				}
 				else {
 					var gridSizeGoal = fieldArea * thing.relativeSize / this.remainingRelativeSize;
-					return this.weights.size * Math.abs(gridSizeGoal - size.w * size.h);
+					return this.weights.size * sq(gridSizeGoal - size.w * size.h);
 				}
 			},
 			pricePosition: function(ething, size, place) {
@@ -377,27 +411,17 @@ define(['underscore', 'jquery'], function(_, $) {
 					, cy = place.y0 + size.h / 2
 					, sq = this.sq
 					;
-				if(ething.sp && ething.sp.cx !== undefined && ething.sp.cy !== undefined) {
-					return this.weights.special * Math.sqrt(sq(ething.sp.cx - cx) + sq(ething.sp.cy - cy));
-				} 
-				else if(ething.sp && ething.sp.x0 !== undefined && ething.sp.y0 !== undefined && 
-									ething.sp.w !== undefined && ething.sp.h !== undefined) {
+				if(ething.sp) {
 					var scx = ething.sp.x0 + ething.sp.w / 2
 						, scy = ething.sp.y0 + ething.sp.h / 2
 						;
-					return this.weights.special * Math.sqrt(sq(scx - cx) + sq(scy - cy));
-				}
-				else if(ething.sp && ething.sp.x0 !== undefined && ething.sp.y0 !== undefined) {
-					var scx = ething.sp.x0 + size.w / 2
-						, scy = ething.sp.y0 + size.h / 2
-						;
-					return this.weights.special * Math.sqrt(sq(scx - cx) + sq(scy - cy));
+					return this.weights.special * (sq(scx - cx) + sq(scy - cy));
 				}
 				else if(ething.pp) {
 					var pcx = ething.pp.x0 + ething.pp.w / 2
 						, pcy = ething.pp.y0 + ething.pp.h / 2
 						;
-					return this.weights.preserve * Math.sqrt(sq(pcx - cx) + sq(pcy - cy));
+					return this.weights.preserve * (sq(pcx - cx) + sq(pcy - cy));
 				} else {
 					return 0;
 				}
@@ -412,15 +436,27 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			pricePreviousFailures: function(ething, size, place) {
 				var pHash = 0x000fffff & this.field.hashPlacement(place.x0, place.y0, size.w, size.h);
-				return this.weights.fail * (this.failCounts[pHash] || 0);
+				var feat = this.featureCounts[pHash];
+				if(!feat) {
+					return 0;
+				}
+				var p = feat.successCount, f = feat.failureCount, n = p + f;
+				if(feat.failureCount < feat.successCount) {
+					return -this.weights.success * p / n;
+				} else {
+					return this.weights.fail * (f + 0.5) / (p + 0.5)
+				}
 			},
-			scorePlacement: function(ething, size, place) {
+			scorePlacement: function(ething, size, place, thingSize) {
 				var costs = {crop: 0, size: 0, position: 0, complexity: 0, mix: 0, fail: 0, totalCost: 0, worseCase: 0, score: 0}
 					, cost = 0
 					;
-				cost += costs.crop = this.priceCrop(ething, size, place);
-				cost += costs.size = this.priceSize(ething, size, place);
-				cost += costs.position = this.pricePosition(ething, size, place);
+				cost += costs.crop = thingSize.cropCost;
+				cost += costs.size = thingSize.sizeCost;
+				cost += costs.position = ething.positionCostWeight ? 
+						(ething.positionCostWeight * (	this.sq( place.x0 + size.w / 2 - ething.positionCostCx ) + 
+														this.sq( place.y0 + size.h / 2 - ething.positionCostCy ) )) : 0;
+
 				cost += costs.complexity = this.priceComplexity(ething, size, place);
 				//cost += costs.mix = this.priceMixiness(ething, size, place);
 				cost += costs.fail = this.pricePreviousFailures(ething, size, place);
@@ -503,7 +539,7 @@ define(['underscore', 'jquery'], function(_, $) {
 							//we are now on the widest place by which this thing fits by height, 
 							//if it also fits by width then it is a valid placement
 							if(size.w <= place.w) {
-								protoPlacements.push({ething: ething, thing: thing, size: size, place: place});
+								protoPlacements.push({ething: ething, thing: thing, size: size, place: place, thingSize: thingSize});
 							}
 							//whether we fit or not, this size thing is done being considered
 							tsi++;
@@ -515,23 +551,25 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			costToPBase: Math.pow(2.0, 1.0 / 1.0), //every 1 points of score is a factor of two in liklihood of placement 
 			scoreProtoPlacements: function(protoPlacements) {
+				//spent 625ms out of 1323ms inside this function before fixing it to do less transendental
+				//changed to 485ms out of 1123ms
+
 				var totP = 0.0, ppi, pp, r, ppn = protoPlacements.length, maxScore = -1e50;
 				for(ppi = 0; ppi < ppn; ppi++) {
 					pp = protoPlacements[ppi];
-					pp.costs = this.scorePlacement(pp.ething, pp.size, pp.place);
+					pp.costs = this.scorePlacement(pp.ething, pp.size, pp.place, pp.thingSize);
 					pp.score = pp.costs.score;
 					maxScore = Math.max(maxScore, pp.score);
 				}
-				var minP = 1e-6;
+				var minP = 1e-6, minScore = Math.log(minP) / Math.log(this.costToPBase);
 				for(ppi = ppn - 1; ppi >= 0; ppi--) {
 					var pp = protoPlacements[ppi]
 						, score = pp.score -= maxScore
-						, p = pp.p = Math.pow(this.costToPBase, pp.score)
 						;
-					if(p < minP) {
+					if(score < minScore) {
 						protoPlacements.splice(ppi, 1);
-					}
-					else {
+					} else {
+						var p = pp.p = Math.pow(this.costToPBase, pp.score);
 						totP += p;
 					}
 				}
@@ -540,19 +578,46 @@ define(['underscore', 'jquery'], function(_, $) {
 					throw new Error('totP is NaN!');
 				return totP;
 			},
-			sampleProtoPlacement: function(protoPlacements, totP) {
-				"selects one protoPlacement with probability proportional to 'p' property of protoPlacements and returns index, totP must be exact sum of 'p's"
-				var ppi, ppn, pp, r;
-				ppn = protoPlacements.length;
-				if(ppn < 1) { 
-					return -1;
+			bail: function() {
+				"Current partial solution doesn't work. Clear the field."
+				var uncoveredPlacements = this.field.getUncoveredPlacements();
+				var allPlacements = this.field.getAllPlacements();
+				for(var thingId in allPlacements) {
+					var placement = allPlacements[thingId];
+					var pHash = 0x000fffff & placement.hash;
+					var feat = this.featureCounts[pHash] || 
+									( this.featureCounts[pHash] = {
+										successCount: 0, failureCount: 0, 
+										x0: placement.x0, y0: placement.y0, w: placement.w, h: placement.h } );
+					if(thingId in uncoveredPlacements) {
+						feat.failureCount++;
+					} else {
+						feat.successCount++;
+					}
+					var ething = this.ethings[thingId];
+					ething.placed = false;
+					ething.placement = null;
+					ething.protoPlacement = null;					
 				}
-				if(ppn == 1) {
-					return 0;
+				this.nThingsPlaced = 0;
+				this.field.clear();
+			},
+			iterate: function() {
+				"Will either place one thing or remove a few things"
+				var places = this.field.findPlaces(this.maxLength)
+					, protoPlacements = this.findProtoPlacements(places)
+					;
+				if(protoPlacements.length == 0) {
+					return this.bail();
 				}
-				if(totP <= 0) {
-					throw new Error('Numerical stabilty error');	
+				var totP = this.scoreProtoPlacements(protoPlacements) //will splice some protoPlacements out of array because they were too improbable
+					, ppn = protoPlacements.length
+					;
+				if(ppn == 0) {
+					return this.bail();
 				}
+				var ppi, pp, r;
+				
 				do {
 					r = Math.random() * totP;
 					for(ppi = 0; ppi < ppn; ppi++) {
@@ -562,100 +627,51 @@ define(['underscore', 'jquery'], function(_, $) {
 							break;
 					}
 				} while(ppi >= ppn); //loop in case floating point screwed us up
-				return ppi;
-			},
-			iterate: function() {
-				"Will either place one thing or remove a few things"
-				var places = this.field.findPlaces(this.maxLength)
-					, protoPlacements = this.findProtoPlacements(places)
-					, totP = this.scoreProtoPlacements(protoPlacements) //will splice some protoPlacements out of array because they were too improbable
-					, ppn = protoPlacements.length
-					;
-				var ppi, pp, r, nTries = 0;
-				while(ppn > 0) { //loop because we may have to discard options when we find loops						
-					nTries++;
-					//totP may become inaccurate after some tries because of numerical instability
-					if(totP <= 0 || 0 == nTries % 10) {
-						totP = 0.0;
-						for(ppi = 0; ppi < ppn; ppi++) {
-							totP += protoPlacements[ppi].p;
-						}
-					}
-					ppi = this.sampleProtoPlacement(protoPlacements, totP);
-					pp = protoPlacements[ppi];
 
-					var placement = this.field.place(pp.thing, pp.size, pp.place);
-					if(this.fieldsClosed[this.field.hash]) {
-						this.field.unplace(placement);
-						totP -= pp.p;
-						protoPlacements.splice(ppi, 1);
-						ppn--;
-					} else {
-						pp.ething.placed = true;
-						pp.ething.placement = placement;
-						pp.ething.protoPlacement = pp;
-						this.nThingsPlaced++;
-						break;
-					}
-				}
-				if(ppn === 0) {
-					if(this.mcmcMode) {
-						for(var ti = this.things.length - 1; ti >= 0; ti--) {
-							var thing = this.things[ti]
-								, ething = this.ethings[ thing.id ]
-								;
-							if(ething.placed) {
-								var pHash = 0x000fffff & ething.placement.hash;
-								this.failCounts[pHash] = 1 + (this.failCounts[pHash] || 0);
-								this.field.unplace(ething.placement);
-								ething.placed = false;
-								ething.placement = null;
-								ething.protoPlacement = null;
-								this.nThingsPlaced--;
-							}
-						}
-						this.fieldsClosed = {};
-					} else {
-						//there were no valid placements, detinate a bomb to clear space and try again
-						var ops = this.field.findAdjacentPlacements(places[ places.length - 1 ]);
-						ops = this.field.recursiveUnplace(ops); //unplace these placements and any below them
-						for(var i = ops.length - 1; i >= 0; i--) {
-							var p = ops[i];
-							var ething = this.ethings[p.thing.id];
-							ething.placed = false;
-							ething.placement = null;
-							ething.protoPlacement = null;
-							this.nThingsPlaced--;
-						}
-					}
-				}
-				this.fieldsClosed[this.field.hash] = true;
+				var placement = this.field.place(pp.thing, pp.size, pp.place);
+				pp.ething.placed = true;
+				pp.ething.placement = placement;
+				pp.ething.protoPlacement = pp;
+				this.nThingsPlaced++;
 			},
-			pack: function(maxIterations, maxIterationsWithoutProgress) {
+			pack: function(maxIterations) {
 				var mostThingPlaced = 0
 					, mostThingPlacedIter = 0
 					, nThings = this.things.length
 					, t0 = new Date().getTime()
 					, self = this
+					, milestones = [{t: t0, iter: 0, n:0}]
+					, iter0, nClears = 0, totThingsCleared = 0
 					;
+				this.packingReport = {};
 				function beforeReturn(msg) {
 					var t1 = new Date().getTime();
+					self.packingReport.duration = (t1 - t0) + 'ms';
+					self.packingReport.iterations = iter0;
+					self.packingReport.iterationPerMs = (iter0 / (t1 - t0)).toFixed(3);
+					self.packingReport.milestones = milestones;
+					self.packingReport.nClears = nClears;
+					self.packingReport.totThingsCleared = totThingsCleared;
+					self.packingReport.avgThingsCleared = totThingsCleared / nClears;
+
 					self.log('packing took ' + (t1 - t0) + 'ms, msg: ' + msg)
 				}
 				this.log('started packing');
-				for(var iter0 = 0; iter0 < maxIterations; iter0++) {
+				for(iter0 = 1; iter0 <= maxIterations; iter0++) {
+					var prevNThingsPlaced = this.nThingsPlaced;
 					this.iterate();
 					if(this.nThingsPlaced == nThings) {
+						milestones.push({t: new Date().getTime(), iter: iter0, n: nThings});
 						beforeReturn('success after ' + iter0 + ' iterations');
 						return true;
 					}
 					if(this.nThingsPlaced > mostThingPlaced) {
+						milestones.push({t: new Date().getTime(), iter: iter0, n: this.nThingsPlaced});
 						mostThingPlaced = this.nThingsPlaced;
 						mostThingPlacedIter = iter0;
-					}
-					if(iter0 - mostThingPlacedIter > maxIterationsWithoutProgress) {
-						beforeReturn('failed for lack of progress')
-						return false;
+					} else if( this.nThingsPlaced == 0 && prevNThingsPlaced > 0) {
+						nClears++;
+						totThingsCleared += prevNThingsPlaced;
 					}
 				}
 				beforeReturn('failed to converge after ' + maxIterations + ' iterations');
@@ -691,11 +707,62 @@ define(['underscore', 'jquery'], function(_, $) {
 							.each(function(tot, p) {
 								report[p] = { n: tot.n, 
 											avg: tot.x / tot.n, 
-											stddev: Math.sqrt( (tot.x2 - tot.x * tot.x) / tot.n ),
+											stddev: Math.sqrt(tot.x2 / tot.n - tot.x * tot.x / tot.n / tot.n ),
 											min: tot.min,
 											max: tot.max
 										};
 							});
+				return report;
+			},
+			correlation: function(list, ap, bp) {
+				var n = 0, ax = 0, bx = 0;
+				_.each(list, function(item) {
+					n++;
+					var av = item[ap] || 0, bv = item[bp] || 0;
+					ax += av;
+					bx += bv;
+				});
+				var am = ax / n, bm = bx / n
+					, ad = 0, bd = 0, abd = 0
+					;
+				_.each(list, function(item) {
+					var av = item[ap] || 0, bv = item[bp] || 0
+						adx = av - am, bdx = bv - bm
+						;
+					ad += adx * adx;
+					bd += bdx * bdx;
+					abd += adx * bdx;
+				});
+				var av = ad / n, bv = bd / n, abv = abd / n
+				return abv / Math.sqrt(av * bv);
+			},
+			measureSuccessRelativeSize: function() {
+				var ss = _.map(this.ethings, function(ething) {
+						return { relative: ething.thing.relativeSize, actual: ething.placement.w * ething.placement.h, ri: 0, ai: 0 };
+					});
+				function assignRank(list, vp, rp) {
+					var lastValue = false, lastRank = 0, rank = 0;
+					_.chain(list).sortBy(vp).each(function(s, i) { 
+						if(s[vp] !== lastValue) {
+							rank++;
+						}
+						s[rp] = rank;
+					});
+				}
+				assignRank(ss, 'relative', 'ri');
+				assignRank(ss, 'actual', 'ai');
+				return this.correlation(ss, 'ri', 'ai');
+			},
+			report: function() {
+				var report = this.packingReport;
+				report.costs = this.reportCosts();
+				var feats = _.values(this.featureCounts);
+				report.mostFrequentFeatures = _.sortBy(feats, function(f) { return 0 - f.successCount - f.failureCount; }).slice(0, 10);
+				report.mostSucceedingFeatures = _.sortBy(feats, function(f) { return 0 - f.successCount / (f.successCount + f.failureCount); }).slice(0, 10);
+				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - f.failureCount / (f.successCount + f.failureCount); }).slice(0, 10);
+				
+				report.relativeSizeCorrelation = this.measureSuccessRelativeSize();
+
 				return report;
 			}
 		}
@@ -791,8 +858,17 @@ define(['underscore', 'jquery'], function(_, $) {
 					scaledHeight = s * nativeHeight;
 					offsetLeft = Math.round((width - scaledWidth) * ( (crops[3] + 0.05) / (0.1 + crops[1] + crops[3]) ) );
 					offsetTop = Math.round((height - scaledHeight) * ( (crops[0] + 0.05) / (0.1 + crops[0] + crops[2]) ) );
-					cost = Math.pow( (s * cropWidth - width) / cropWidth, 2) + Math.pow( (s * cropHeight - height) / cropHeight, 2);
 					
+					var ecs = [-offsetTop / s, (scaledWidth - width + offsetLeft) / s, 
+											(scaledHeight - height + offsetTop) / s, -offsetLeft / s]
+						, cropErrors = _.map(ecs, function(effCrop, i) { return this.gridLengthCeil(Math.abs(effCrop - crops[i])); }, this)
+						;
+					//how many grid units are we off from the intended crop if we scaled up to native size
+					cost = 	cropErrors[0] * w + cropErrors[0] * cropErrors[1] + 
+							cropErrors[1] * h + cropErrors[1] * cropErrors[2] + 
+							cropErrors[2] * w + cropErrors[2] * cropErrors[3] + 
+							cropErrors[3] * h + cropErrors[3] * cropErrors[0]; 
+
 					if(isNaN(scaledWidth + scaledHeight + offsetLeft + offsetTop + cost + w + h)) {
 						throw new Error('NaN!');
 					}
@@ -869,13 +945,13 @@ define(['underscore', 'jquery'], function(_, $) {
 		waitForThingsToBeReady: function(things, timeout, cb) {
 			//this would actually be a great place to be using promises.
 
-			var t0 = new Date().getTime();
+			var t0 = new Date().getTime(), self = this;
 			function check() {
 				var t1 = new Date().getTime();
 				if(_.every(things, function(thing) { return thing.ready; })) {
-					return cb(true);
+					return cb.call(self, true);
 				} else if( t1 > t0 + timeout) {
-					return cb(false);
+					return cb.call(self, false);
 				} else {
 					setTimeout(check, Math.min(100, t0 + timeout - t1));
 				}
@@ -885,34 +961,24 @@ define(['underscore', 'jquery'], function(_, $) {
 		packRectangles: function(things, fieldWidth, goalFieldHeight) {
 			var field = new Layout.Field(fieldWidth, Math.floor(1.5 * goalFieldHeight))
 				, packing = new Layout.Packing(field, things, goalFieldHeight)
-				, maxIterWithoutProgress = 10000
-				, maxIterPerItem = 100
+				, maxIterPerItem = 200
 				, didItWork
-				, t0 = new Date().getTime()
 				;
-			for(var iTry = 0; iTry < 20; iTry++) {
-				this.log('Beginning try #' + (1 + iTry))
-				didItWork = packing.pack(things.length * maxIterPerItem, maxIterWithoutProgress);
-				if(didItWork) {
-					break;
-				}
-				maxIterWithoutProgress += 500;
-				maxIterPerItem += 10;
-			}
-			var t1 = new Date().getTime();
-			this.log('Done packing in ' + (t1 - t0) + 'ms');
-			this.log('Cost report: ' + JSON.stringify(packing.reportCosts(), null, '   ') + '\n');
+			didItWork = packing.pack(things.length * maxIterPerItem);
 			this.field = field;
 			this.packing = packing;
-			return didItWork ? packing.getPlacements() : null;
+			if(!didItWork) {
+				throw new Error('Packing failure');
+			}
+			return packing.getPlacements();
 		},
 		positionRectangles: function(things) {
 			var stepsize = this.padding + this.gridSize, maxHeight = 0;
 			
 			var tweenInterval = 30, minTweenDelay = 5, log = this.log;
 			function tween(duration, waypoints, f) {
-				if(typeof duration != 'number' || isNaN(duration) || duration <= 0) {
-					throw new Error('First argument to tween() must be the positive number of microseconds to tween for.');
+				if(typeof duration != 'number' || isNaN(duration) || duration < 0) {
+					throw new Error('First argument to tween() must be the non-negative number of microseconds to tween for.');
 				}
 				if(f === undefined) {
 					f = waypoints;
@@ -1065,7 +1131,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				});
 				self.fieldWidth = fieldWidth;
 				self.positionRectangles(things);
-				cb();
+				cb.call($field, this);
 			});
 		},
 		estimateGridHeight: function(nThings, width) {

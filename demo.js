@@ -41,6 +41,25 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		});
 	}
 
+	function parseLocation() {
+		var href = '' + document.location.href
+			, m = href.match(/^(\w+):\/\/([^\/]+)(\/[^?]*)(?:\?(.*))?$/)
+			, scheme = m[1]
+			, domain = m[2]
+			, path = m[3]
+			, queryString = m[4]
+			, query = queryString ? _.reduce(queryString.split(/[&?]/), function(q, kv) {
+					var m;
+					if(!kv || !(m = kv.match(/^([^=]+)=([^&?]*)$/))) return q;
+					q[decodeURIComponent(m[1])] = decodeURIComponent(m[2]);
+					return q;
+				}, {}) : {}
+			;
+		return {scheme: scheme, domain: domain, path: path, queryString: queryString, query: query};
+	}
+
+	var parsedLocation = parseLocation();
+
 	function drawImages() {
 		var $field = $('#field');
 		console.log('decorating image objects')
@@ -49,12 +68,7 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		});
 		console.log('drawing images markup');
 		$field.html(jhaml.templates.imageResults({images: images}));
-		console.log('calling planePack');
-		$field.planePack(function() {
-			console.log('finished planePack!');
-			startPolling();
-		});
-		console.log('called planePack');
+		go();
 	}
 
 	var ww0 = 0, wt0 = 0;
@@ -77,6 +91,45 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			setTimeout(loop, 400);
 		}
 		loop();
+	}
+
+	function go() {
+		if(parsedLocation.query.mode == 'profile') {
+			profile();
+		} else {
+			var $field = $('#field');
+			console.log('calling planePack');
+			$field.planePack(function() {
+				console.log('finished planePack!');
+				startPolling();
+			});
+			console.log('called planePack');
+		}
+	}
+
+	function profile() {
+		var reports = window.planePackerProfilingReports = [];
+		var n = (parsedLocation.query.count || 10) - 0;
+		console.log('Beginning ' + n + ' profiling runs');
+		var $field = $('#field');
+		function loop(i) {
+			if(i >= n) {
+				console.log('Done with ' + n + ' profiling runs');
+				return;
+			}
+			$field.removeData('ppLayoutRoot');
+			$field.children('.pp-able').each(function() { $(this).removeData('ppThing').removeClass('pp-layedout'); });
+			var t0 = new Date().getTime();
+			$field.planePack({animationDuration: 0}, function(layout) {
+				var t1 = new Date().getTime();
+				i++;
+				var report = layout.packing.report();
+				reports.push(report);
+				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0) + 'ms packing time: ' + report.duration);
+				loop(i);
+			});
+		}
+		loop(0);
 	}
 
 	var fin = _.after(2, drawImages);
