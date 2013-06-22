@@ -964,7 +964,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				, maxIterPerItem = 200
 				, didItWork
 				;
-			didItWork = packing.pack(things.length * maxIterPerItem);
+			didItWork = packing.pack(Math.max(10000, things.length * maxIterPerItem));
 			this.field = field;
 			this.packing = packing;
 			if(!didItWork) {
