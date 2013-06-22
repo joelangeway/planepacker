@@ -287,7 +287,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 0.1 //how much we care about getting relatvie sizes correct
+				size: 1.0 //how much we care about getting relatvie sizes correct
 				, crop: 3.0 //getting crop correct
 				, preserve: 2.0 //preserving the position of things when re-laying-out
 				, special: 10.0 //how much we care about special requests
@@ -314,8 +314,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			];
 
 			_.each(things, function(thing) {
-				
 				this.remainingRelativeSize += thing.relativeSize;
+			}, this);
+			_.each(things, function(thing) {
 				
 				var ething = {
 					thing: thing
@@ -329,15 +330,19 @@ define(['underscore', 'jquery'], function(_, $) {
 
 				this.ethings[ ething.id ] = ething;
 
-				_.each(thing.sizes, function(size) {
+				var tssizes = _.map(thing.sizes, function(size) {
 					this.maxWidth = Math.max(this.maxWidth, size.w, size.h);
 					var sizeCost = this.priceSize(ething, size, samplePlaces[0]);
 					var cropCost = this.priceCrop(ething, size, samplePlaces[0]);
-					this.thingSizes.push( { 
+					
+					return {
 							ething: ething, size: size, 
 							sizeCost: sizeCost, cropCost: cropCost, sizeAndCropCost: sizeCost + cropCost 
-						} );
+					};
 				}, this);
+				tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 10);
+				this.thingSizes.push.apply(this.thingSizes, tssizes);
+
 				thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
 			}, this);
 
