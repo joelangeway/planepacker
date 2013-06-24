@@ -43,19 +43,38 @@ define(['underscore', 'jquery'], function(_, $) {
 		LayoutField.prototype = {
 			sq: function(x) { return x * x; },
 			hashPlacement: function(x0, y0, w, h) {
-				var h = 39119;
+				var a = 783958622; //fixed random seed
 				// function mix() {
-				// 	h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7));
+				// 	a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7));
 				// }
-				h += x0;
-				h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7)); //mix();
-				h += y0;
-				h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7)); //mix();
-				h += w;
-				h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7)); //mix();
-				h += h;
-				h = 0x3fffffff & (((h & 0x0001ffff) << 13) - (0x3fffffff & h) + (h >> 7)); //mix();
-				return h;
+			
+				// //known good at 5.1 iterations per ms
+				// a += x0;
+				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
+				// a += y0;
+				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
+				// a += w;
+				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
+				// a += h;
+				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
+				
+				//got 5.6 iterations per ms
+				// a += x0;
+				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+				// a += y0;
+				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+				// a += w;
+				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+				// a += h;
+				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+				
+				//got 5.7 iterations per ms
+				a ^= (x0 << 16) | (w << 8) | h
+				a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+				a ^= y0;
+				a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
+
+				return a;
 			},
 			clear: function() {
 				for(var x = this.fW - 1; x >= 0; x--) {
@@ -274,6 +293,38 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			getAllPlacements: function() {
 				return this.placements;
+			},
+			computeColumniness: function() {
+				var colClosed = {}, rowClosed = {}, colTotal = 0, rowTotal = 0;
+				_.each(this.placements, function(placement, thingId) {
+					if(!colClosed[thingId]) {
+						var colLen = 0;
+						var colP = placement;
+						while(colP) {
+							var southernNeighbor = colP.y1 < this.fH && this.cells[colP.x0 * this.fH + colP.y1];
+							if(southernNeighbor && southernNeighbor.x0 == colP.x0 && southernNeighbor.x1 == colP.x1) {
+								colClosed[southernNeighbor.thing.id] = true;
+								colLen++
+							}
+							colP = southernNeighbor;
+						}
+						colTotal += colP * colP;
+					}
+					if(!rowClosed[thingId]) {
+						var rowLen = 0;
+						var rowP = placement;
+						while(rowP) {
+							var easternNeighbor = rowP.x1 < this.fW && this.cells[rowP.x1 * this.fH + rowP.y0];
+							if(easternNeighbor && easternNeighbor.y0 == rowP.y0 && easternNeighbor.y1 == rowP.y1) {
+								rowClosed[easternNeighbor.thing.id] = true;
+								rowLen++
+							}
+							rowP = easternNeighbor;
+						}
+						rowTotal += rowLen * rowLen;
+					}
+				}, this);
+				return colTotal + rowTotal;
 			}
 		}
 		return LayoutField;
@@ -522,7 +573,7 @@ define(['underscore', 'jquery'], function(_, $) {
 							//we are now on the widest place by which this thing fits by height, 
 							//if it also fits by width then it is a valid placement
 							if(size.w <= place.w) {
-								protoPlacements.push({ething: ething, thing: thing, size: size, place: place});
+								protoPlacements.push({ething: ething, thing: thing, size: size, place: place, costs: null, score: 0, p: 0});
 							}
 							//whether we fit or not, this size thing is done being considered
 							si++;
@@ -572,21 +623,20 @@ define(['underscore', 'jquery'], function(_, $) {
 					maxScore = Math.max(maxScore, pp.score);
 				}
 				var minP = 1e-6, minScore = Math.log(minP) / Math.log(this.costToPBase);
-				for(ppi = ppn - 1; ppi >= 0; ppi--) {
+				var scaleScore = Math.log(this.costToPBase);
+				var pps = [];
+				for(ppi = 0; ppi < ppn; ppi++) {
 					var pp = protoPlacements[ppi]
 						, score = pp.score -= maxScore
 						;
-					if(score < minScore) {
-						protoPlacements.splice(ppi, 1);
-					} else {
-						var p = pp.p = Math.pow(this.costToPBase, pp.score);
-						totP += p;
+					if(score >= minScore) {
+						totP += pp.p = Math.exp(scaleScore * score);
+						pps.push(pp);
 					}
 				}
-				
 				if(isNaN(totP))
 					throw new Error('totP is NaN!');
-				return totP;
+				return {totP: totP, protoPlacements: pps};
 			},
 			bail: function() {
 				"Current partial solution doesn't work. Clear the field."
@@ -615,12 +665,14 @@ define(['underscore', 'jquery'], function(_, $) {
 			iterate: function() {
 				"Will either place one thing or remove a few things"
 				var places = this.field.findPlaces(this.maxLength)
-					, protoPlacements = this.findProtoPlacements(places)
+					, _protoPlacements = this.findProtoPlacements(places)
 					;
-				if(protoPlacements.length == 0) {
+				if(_protoPlacements.length == 0) {
 					return this.bail();
 				}
-				var totP = this.scoreProtoPlacements(protoPlacements) //will splice some protoPlacements out of array because they were too improbable
+				var sppr = this.scoreProtoPlacements(_protoPlacements) //will splice some protoPlacements out of array because they were too improbable
+					, totP = sppr.totP
+					, protoPlacements = sppr.protoPlacements
 					, ppn = protoPlacements.length
 					;
 				if(ppn == 0) {
@@ -766,6 +818,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				assignRank(ss, 'actual', 'ai');
 				return this.correlation(ss, 'ri', 'ai');
 			},
+			measureSuccessColumniness: function() {
+				return this.field.computeColumniness();
+			},
 			report: function() {
 				var report = this.packingReport;
 				report.costs = this.reportCosts();
@@ -775,6 +830,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - (f.failureCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
 				
 				report.relativeSizeCorrelation = this.measureSuccessRelativeSize();
+				report.columniness = this.measureSuccessColumniness();
 
 				return report;
 			}

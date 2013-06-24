@@ -141,6 +141,7 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				stat('iterationPerMs');
 				stat('nClears');
 				stat('relativeSizeCorrelation');
+				stat('columniness');
 
 				return;
 			}
