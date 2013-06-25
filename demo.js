@@ -67,32 +67,11 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		_.each(images, function(image) { 
 			image.relativeSize = rsp == '0' ? 1 : 5 + image.tokens.length;
 		});
-		var sampleImages = _.shuffle(images).slice(0, 25);
+		//var sampleImages = _.shuffle(images).slice(0, 25);
+		var sampleImages = images;
 		console.log('drawing images markup');
 		$field.html(jhaml.templates.imageResults({images: sampleImages}));
 		go();
-	}
-
-	function startPolling() {
-		var ww0 = $(window).width()
-			, resizing = false
-			;
-		function loop() {
-			var ww1;
-			if(!resizing && ww0 != (ww1 = $(window).width())) {
-				ww0 = ww1;
-				resizing = true;
-				console.log('calling planePack on resize');
-				$('#field').planePack(function(layout) {
-					resizing = false;
-					console.log('finished planePack on resize!');
-					window.planePackerPackingReport = layout.packing.report();
-					console.log('set window.planePackerPackingReport');
-					setTimeout(loop, 1);
-				});
-			}
-		}
-		$(window).resize(loop);
 	}
 
 	function go() {
@@ -107,7 +86,6 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				console.log('finished planePack!');
 				window.planePackerPackingReport = layout.packing.report();
 				console.log('set window.planePackerPackingReport');
-				startPolling();
 			});
 			console.log('called planePack');
 		}

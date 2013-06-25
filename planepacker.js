@@ -6,6 +6,27 @@ var window;
 
 define(['underscore', 'jquery'], function(_, $) {
 
+	_.mixin({
+		repeat: function(v, n) {
+			var a = Array(n);
+			for(var i = 0; i < n; i++)
+				a[i] = v;
+			return a;
+		},
+		map2obj: function(a, kf, vf, c) {
+			var b = {};
+			c = c || null;
+			_.each(a, function(v0, k0) {
+				var k1 = kf.call(c, v0, k0, a);
+				if(k1 === false) {
+					return false;
+				}
+				b[k1] = vf.call(c, v0, k0, a, k1);
+			});
+			return b;
+		}
+	});
+
 	var nextThingId = 1;
 	function Layout($field, opt) {
 		if(! ($field instanceof $) && _.isObject($field)) {
@@ -30,101 +51,32 @@ define(['underscore', 'jquery'], function(_, $) {
 					a[i] = v;
 				return a;
 			}
-			//lower and upper bounds of first extent of free space in each column
-			this.lbs = fill(fW, 0);
-			this.ubs = fill(fW, fH);
+			//lower bounds of first extent of free space in each column
+			this.lbs = _.repeat(0, fW);
 			//for each cell in field, point to placement occupying it or null if free
-			this.cells = fill(fH * fW, null);
+			this.cells = _.repeat(null, fH * fW);
 			//dictionary of all placements on field by thing id
 			this.placements = {};
 			//hash of all the placements thus far (used for closed set)
 			this.hash = 42589;
 		}
 		LayoutField.prototype = {
-			sq: function(x) { return x * x; },
 			hashPlacement: function(x0, y0, w, h) {
 				var a = 783958622; //fixed random seed
-				// function mix() {
-				// 	a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7));
-				// }
-			
-				// //known good at 5.1 iterations per ms
-				// a += x0;
-				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
-				// a += y0;
-				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
-				// a += w;
-				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
-				// a += h;
-				// a = 0x3fffffff & (((a & 0x0001ffff) << 13) - (0x1fffffff & a) + (a >> 7)); //mix();
-				
-				//got 5.6 iterations per ms
-				// a += x0;
-				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-				// a += y0;
-				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-				// a += w;
-				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-				// a += h;
-				// a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-				
-				//got 5.7 iterations per ms
-				a ^= (x0 << 16) | (w << 8) | h
+				a ^= ((y0 & 0x07ff) << 19) | ((x0 & 0x7f) << 12) | ((w & 0x3f) << 6) | (h & 0x3f)
 				a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-				a ^= y0;
-				a = ((0x00007fff & a) * 22853) ^ ((a >> 15) * 26171);
-
+				a ^= a >> 9;
 				return a;
 			},
 			clear: function() {
 				for(var x = this.fW - 1; x >= 0; x--) {
 					this.lbs[x] = 0;
-					this.ubs[x] = this.fH;
 				}
 				for(var i = this.cells.length - 1; i >= 0; i--) {
 					this.cells[i] = null;
 				}
 				this.placements = {};
 				this.hash = 42589;
-			},
-			placeSlice: function(x, y0, y1) {
-				var lb = this.lbs[x], ub = this.ubs[x];
-
-				if(lb == y0)
-					lb = y1;
-				else if(ub >= y1)
-					ub = y0;
-				//else we were already in the shadow of another hole
-				
-				if(lb == ub) {
-					//we've filled a hole, find next hole
-					var cib = x * this.fH;
-					lb = y1;
-					while(lb < this.fH && this.cells[cib + lb])
-						lb++;
-					ub = lb;
-					while(ub < this.fH && !this.cells[cib + ub])
-						ub++;
-				}
-				this.lbs[x] = lb;
-				this.ubs[x] = ub;
-			},
-			unplaceSlice: function(x, y0, y1) {
-				var lb = this.lbs[x], ub = this.ubs[x];
-
-				if(lb == y1)
-					lb = y0;
-				else if(ub == y0)
-					ub = y1;
-				else if(lb > y1) {
-					lb = y0;
-					ub = y1;
-				}
-				var cib = x * this.fH;
-				while(ub < this.fH && !this.cells[cib + ub])
-					ub++;
-				this.lbs[x] = lb;
-				this.ubs[x] = ub;
 			},
 			place: function(thing, size, place) {
 				
@@ -139,13 +91,16 @@ define(['underscore', 'jquery'], function(_, $) {
 				this.hash += placement.hash;
 
 				for(var x = x0; x < x1; x++) {
+					if(this.lbs[x] != y0) {
+						throw new Error('things must be places in top most left most free spot always!');
+					}
+					this.lbs[x] = y1;
 					for(var y = y0; y < y1; y++) {
 						var ci = x * this.fH + y;
 						if(this.cells[ci])
 							throw new Error('Logic error');
 						this.cells[ci] = placement;
 					}
-					this.placeSlice(x, y0, y1);
 				}
 				this.placements[thing.id] = placement;
 				return placement;
@@ -158,44 +113,39 @@ define(['underscore', 'jquery'], function(_, $) {
 				delete this.placements[placement.thing.id];
 
 				for(var x = x0; x < x1; x++) {
+					if(this.lbs[x] != y1) {
+						throw new Error('things must be places in top most left most free spot always!');
+					}
+					this.lbs[x] = y0;
 					for(var y = y0; y < y1; y++) {
 						var ci = x * this.fH + y;
 						if(this.cells[ci] !== placement)
 							throw new Error('Logic error');
 						this.cells[ci] = null;
 					}
-					this.unplaceSlice(x, y0, y1);
 				}
 			},
-			findPlaces: function(maxWidth) {
-				"returns array of places where top left corner is the top most, left most free space remaining"
-				"spaces or in order of descending height and ascending width"
+			findPlace: function() {
+				"returns place where top left corner is the top most, left most free space remaining"
 				var x0 = 0
 					, y0 = this.lbs[0]
+					, w = 1
+					, connected = true;
 					;
 				for(var x = 1, xl = this.fW; x < xl; x++) {
 					var y = this.lbs[x];
 					if(y < y0) {
 						x0 = x;
 						y0 = y;
+						w = 1;
+						connected = true;
+					} else if (connected && y == y0) {
+						w++;
+					} else {
+						connected = false;
 					}
 				}
-				var y1 = this.ubs[x0]
-					, places = []
-					, x1
-					;
-				for(var x1 = x0 + 1; x1 <= this.fW; x1++) {
-					if(this.lbs[x1] != y0) {
-						places.push({x0: x0, x1: x1, w: x1 - x0, y0: y0, y1: y1, h: y1 - y0});
-						break;
-					}
-					var ub = this.ubs[x1];
-					if(ub < y1) {
-						places.push({x0: x0, x1: x1, w: x1 - x0, y0: y0, y1: y1, h: y1 - y0});
-						y1 = ub;
-					}
-				}
-				return places;
+				return { x0: x0, y0: y0, w: w, h: this.fH - y0, x1: x0 + w, y1: this.fH };
 			},
 			findAdjacentPlacements: function(place) {
 				var self = this, placements = {};
@@ -282,31 +232,6 @@ define(['underscore', 'jquery'], function(_, $) {
 
 				return feats;
 			},
-			recursiveUnplace: function(placements) {
-				var closed = {};
-				_.each(placements, function(placements) { closed[ placements.thing.id ] = true; });
-				function mark(placement) {
-					closed[placement.thing.id] = true;
-					placements.push(placement);
-				}
-				for(var ti = 0; ti < placements.length; ti++) {
-					var placement = placements[ti]
-					var y = placement.y1;
-					for(var x = placement.x0, x1 = placement.x1; x < x1; x++) {
-						var placement2 = this.cells[x * this.fH + y];
-						if(placement2 && !closed[placement2.thing.id]) {
-							mark(placement2);
-						}
-					}
-				}
-				for(var ti = placements.length - 1; ti >= 0; ti--) {
-					var placement = placements[ti]
-					if(placement.fixed)
-						continue;
-					this.unplace(placement);
-				}
-				return placements;
-			},
 			computeComplexityOfPlacement: function(x0, y0, x1, y1) {
 				var c = 0.0, d;
 				if(x0 > 0) {
@@ -329,30 +254,6 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 				return c;
 			},
-			computeMixinessOfPlacement: function(x0, y0, x1, y1) {
-				var m0 = 0, m1 = 0, closed = {}
-				if(y0 > 0) {
-					var y = y0 - 1;
-					for(var x = x0; x < x1; x++) {
-						var p = this.cells[x * this.fH + y];
-						if(p && !closed[p.thing.id]) {
-							closed[p.thing.id] = true;
-							m0++;
-						}
-					}
-				}
-				if(x0 > 0) {
-					var x = x0 - 1;
-					for(var y = y0; y < y1; y++) {
-						var p = this.cells[x * this.fH + y];
-						if(p && !closed[p.thing.id]) {
-							closed[p.thing.id] = true;
-							m1++;
-						}
-					}
-				}
-				return m0 * m0 + m1 * m1;
-			},
 			getUncoveredPlacements: function() {
 				var uncovered = {};
 				for(var x = this.fW - 1; x >= 0; x--) {
@@ -365,39 +266,6 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			getAllPlacements: function() {
 				return this.placements;
-			},
-			computeColumniness: function() {
-				var colClosed = {}, rowClosed = {}, colTotal = 0, rowTotal = 0;
-				//this only works if placements are ordered in the order they were placed, but let's keep it here for reference
-				_.each(this.placements, function(placement, thingId) {
-					if(!colClosed[thingId]) {
-						var colLen = 0;
-						var colP = placement;
-						while(colP) {
-							var southernNeighbor = colP.y1 < this.fH && this.cells[colP.x0 * this.fH + colP.y1];
-							if(southernNeighbor && southernNeighbor.x0 == colP.x0 && southernNeighbor.x1 == colP.x1) {
-								colClosed[southernNeighbor.thing.id] = true;
-								colLen++
-							}
-							colP = southernNeighbor;
-						}
-						colTotal += colP * colP;
-					}
-					if(!rowClosed[thingId]) {
-						var rowLen = 0;
-						var rowP = placement;
-						while(rowP) {
-							var easternNeighbor = rowP.x1 < this.fW && this.cells[rowP.x1 * this.fH + rowP.y0];
-							if(easternNeighbor && easternNeighbor.y0 == rowP.y0 && easternNeighbor.y1 == rowP.y1) {
-								rowClosed[easternNeighbor.thing.id] = true;
-								rowLen++
-							}
-							rowP = easternNeighbor;
-						}
-						rowTotal += rowLen * rowLen;
-					}
-				}, this);
-				return colTotal + rowTotal;
 			},
 			computeDeltaColumniness: function(x0, y0, x1, y1) {
 				var p, cLen, dCol = 0, cLen_1;
@@ -428,6 +296,7 @@ define(['underscore', 'jquery'], function(_, $) {
 		}
 		return LayoutField;
 	})();
+
 	Layout.Packing = (function() {
 		function Packing(field, things, goalFieldHeight) {
 			this.field = field;
@@ -438,16 +307,19 @@ define(['underscore', 'jquery'], function(_, $) {
 
 			this.weights = {
 				size: 3.0 //how much we care about getting relatvie sizes correct
-				, crop: 3.0 //getting crop correct
-				, preserve: 10.0 //preserving the position of things when re-laying-out
-				, special: 10.0 //how much we care about special requests
-				, columniness: 8.0 //how much do we penalize things forming rows and columns
+				, crop: 2.0 //getting crop correct
+				, preserve: 12.0 //preserving the position of things when re-laying-out
+				, special: 20.0 //how much we care about special requests
+				, columniness: 10.0 //how much do we penalize things forming rows and columns
 				
-				, dampenAesthetics: 0.25  //how much attention we pay to aesthetics when searching for solutions, good aesthetics show up in the success factor
+				, dampenAesthetics: 0.70  //how much attention we pay to aesthetics when searching for solutions, good aesthetics show up in the success factor
 
-				, complexity: 5.0 //how hard do we try to keep the problem manageable
+				, maxPositionError: 50.0 //inflict severe penalty if we place something more than this many grid units from goal
+				, maxPositionPenalty: 10000.0
+
+				, complexity: 3.0 //how hard do we try to keep the problem manageable
 				, fail: 20.0 //how much do we avoid placements that previously failed to complete
-				, success : 0.5 //how much do we count score of previous successes with a feature
+				, success : 10.0 //how much do we count score of previous successes with a feature
 			};
 
 			this.remainingRelativeSize = 0;
@@ -460,14 +332,16 @@ define(['underscore', 'jquery'], function(_, $) {
 
 			this.featureCounts = new Array(1 << 20); //map of placement hashes to count of times a partial solution succeeses or failed when incorperating this placement
 
+			this.solutionHash = 0;
 			this.closedSolutions = {};
 			this.solutions = []; //collection of solutions found thus far
 			this.minScore = 0;
+			this.maxScore = 0;
 			this.avgScore = 0;
 			this.iter0 = 0; //count of iterations thus far
-			this.nRunThroughts = 0;
+			this.nRunThroughs = 0;
 			this.nRepeatedSolutions = 0;
-			
+
 			function precompute() {
 				var samplePlaces = [
 					{x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1},
@@ -479,6 +353,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				_.each(things, function(thing) {
 					this.remainingRelativeSize += thing.relativeSize;
 				}, this);
+				var totalThingSizesTrimmed = 0;
 				_.each(things, function(thing) {
 					
 					var ething = {
@@ -511,14 +386,26 @@ define(['underscore', 'jquery'], function(_, $) {
 						ts.cropCost = ts.rawCropCost - minCropCost;
 						ts.sizeAndCropCost = ts.sizeCost + ts.cropCost;
 					}, this);
+					var pc = tssizes.length;
 					tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 10);
+					totalThingSizesTrimmed += pc - tssizes.length;
 					this.thingSizes.push.apply(this.thingSizes, tssizes);
 
 					thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
 				}, this);
+				
+				this.log('thingSizes.length=' + this.thingSizes.length + ', trimmed: ' + totalThingSizesTrimmed);
 
 				//sort thing sizes in order of descending height
 				this.thingSizes.sort(function(ts1, ts2) { return ts2.size.h - ts1.size.h; });
+
+
+				this.sizes = _.chain(this.thingSizes)
+						.groupBy(function(ts) { return ts.size.w + '-' + ts.size.h; })
+						.map(function(tsg) {
+							tsg = _.sortBy(tsg, 'sizeAndCropCost');
+							return { w: tsg[0].size.w, h: tsg[0].size.h, thingSizes: tsg };
+						}).value();
 
 				//for each thing, calculate the total worst possible cost so that we 
 				// can call that a gain when we place the thing, that way we are eager 
@@ -616,23 +503,26 @@ define(['underscore', 'jquery'], function(_, $) {
 				cost += costs.crop = thingSize.cropCost;
 				cost += costs.size = thingSize.sizeCost;
 
-				var dx = x0 + w / 2 - ething.positionCostCx, dy = y0 + h / 2 - ething.positionCostCy;
+				var dx = x0 + w / 2 - ething.positionCostCx
+					, dy = y0 + h / 2 - ething.positionCostCy
+					, posErr2 =dx * dx + dy * dy
+					, maxD2 = this.weights.maxPositionError * this.weights.maxPositionError
+					;
 				cost += costs.position = ething.positionCostWeight ? 
-						(ething.positionCostWeight * ( dx * dx + dy * dy ) ) : 0;
+						(ething.positionCostWeight * posErr2 + (posErr2 > maxD2 ? this.weights.maxPositionPenalty : 0)) : 0;
 				
-				cost += costs.columniness = this.weights.columniness * this.field.computeDeltaColumniness(x0, y0, w, h);
+				cost += costs.columniness = this.weights.columniness * this.field.computeDeltaColumniness(x0, y0, x0 + w, y0 + h);
 				
 				cost *= this.weights.dampenAesthetics;
 
-				cost += costs.complexity = this.weights.complexity * this.field.computeComplexityOfPlacement(x0, y0, w, h);
+				cost += costs.complexity = this.weights.complexity * this.field.computeComplexityOfPlacement(x0, y0, x0 + w, y0 + h);
 				
 				var pfcost = 0, sscost = 0;
 				var hashes = this.field.getAdjacentFeatures(x0, y0, w, h);
-				var pHash = this.field.hashPlacement(x0, y0, w, h);
-				//hashes.push(pHash);
-				hashes = [pHash];
+				//hashes.push(protoPlacement.hash);
+				hashes = [protoPlacement.hash];
 				protoPlacement.featureHashes = hashes;
-				var priorFaiure = (this.nRunThroughts - this.solutions.length + 0.5) / (0.5 + this.solutions.length);
+				var priorFaiure = (this.nRunThroughs - this.solutions.length + 0.5) / (0.5 + this.solutions.length);
 				var successWeight = 0;
 				for(var i = hashes.length - 1; i >= 0; i--) {
 					var feat = this.featureCounts[0x000fffff & hashes[i]];
@@ -641,56 +531,35 @@ define(['underscore', 'jquery'], function(_, $) {
 					}
 					var p = feat.successCount, f = feat.failureCount, n = p + f;
 					pfcost += f > p && ((f + 0.5) / (0.5 + p));
-					sscost += feat.successCount * (feat.score - this.avgScore);
+					sscost += feat.successCount * (feat.score - this.maxScore);
 					successWeight += feat.successCount;
 				}
 				var nFeats = Math.max(1, hashes.length);
 				cost += costs.fail = this.weights.fail * pfcost / nFeats;
 				cost += costs.success = -this.weights.success * sscost / Math.max(1, successWeight);
 
+				if(isNaN(cost)) {
+					throw new Error('Numerical error');
+				}
 				costs.totalCost = cost;
 				costs.worseCase = ething.maxCost;
 				//costs.score = ething.maxCost - cost;
 				costs.score = 0 - cost;
 				return costs;
 			},
-			findProtoPlacements: function(places) {
-				var protoPlacements = []
-					;
-				//note: places and sizes are both in order of decending height, 
-				//		and places is also ordered by ascending width
-				var tsi = 0
-					, tsn = this.thingSizes.length
-					, pi = 0
-					, pn = places.length
-					; 
-				//throw new Error('break!');
-
-				while(tsi < tsn) {
+			findProtoPlacements: function(place) {
+				var protoPlacements = [];
+				for(var tsi = 0, tsn = this.thingSizes.length; tsi < tsn; tsi++) {
 					var thingSize = this.thingSizes[tsi]
 						, ething = thingSize.ething
 						, thing = ething.thing
 						, size = thingSize.size
-						, place = places[pi]
 						;
-					if(ething.placed) {
-						//don't place the thing twice
-						tsi++;
-					} else if(size.h > place.h) {
-						//we can't fit by height, maybe a shorter thingSize will work
-						tsi++;
-					} else if(pi + 1 < pn && places[pi + 1].h >= size.h) {
-						//we can make the place shorter and still fit, so do it to maximize availible width
-						pi++;
-					} else {
-						//we are now on the widest place by which this thing fits by height, 
-						//if it also fits by width then it is a valid placement
-						if(size.w <= place.w) {
-							protoPlacements.push({ething: ething, thing: thing, size: size, place: place, thingSize: thingSize,
-													featureHashes: null, costs: null, score: 0, p: 0});
-						}
-						//whether we fit or not, this size thing is done being considered
-						tsi++;
+					if(!ething.placed && size.h <= place.h && size.w <= place.w) {
+						var pHash = 0x3fffffff & (thing.id * 2179 + this.field.hashPlacement(place.x0, place.y0, size.w, size.h));
+						protoPlacements.push({ething: ething, thing: thing, size: size, place: place, thingSize: thingSize, hash: pHash,
+												featureHashes: null, costs: null, score: 0, p: 0});
+					
 					}
 				}
 				return protoPlacements;
@@ -704,15 +573,13 @@ define(['underscore', 'jquery'], function(_, $) {
 					pp.score = pp.costs.score;
 					maxScore = Math.max(maxScore, pp.score);
 				}
-				var minP = 1e-12, minScore = Math.log(minP) / Math.log(this.costToPBase);
+				var minP = 1e-12, minScore = Math.max(-10000, Math.log(minP) / Math.log(this.costToPBase) + maxScore);
 				var scaleScore = Math.log(this.costToPBase);
 				var ppj = 0;
 				for(ppi = 0; ppi < ppn; ppi++) {
-					var pp = protoPlacements[ppi]
-						, score = pp.score -= maxScore
-						;
-					if(score >= minScore) {
-						totP += pp.p = Math.exp(scaleScore * score);
+					var pp = protoPlacements[ppi];
+					if(pp.score >= minScore) {
+						totP += pp.p = Math.exp(scaleScore * (pp.score - maxScore));
 						protoPlacements[ppj++] = pp;
 					}
 				}
@@ -726,34 +593,54 @@ define(['underscore', 'jquery'], function(_, $) {
 				
 				var score = 0;
 				if(success) {
-					var closed = this.closedSolutions[ this.field.hash ];
+					var closed = this.closedSolutions[ this.solutionHash ];
 					if(closed) {
 						this.nRepeatedSolutions++;
 					} else {
 						this.closedSolutions[ this.field.hash ] = true;
-						var sizeCost = 0, cropCost = 0, positionCost = 0, columninessCost = 0;
+						
+						//This gives the average score of each thing
+						var sizeCost = 0, cropCost = 0, positionCost = 0, columninessCost = 0, worstTotalCost = 0;
 						for(var i = this.things.length - 1; i >= 0; i--) {
 							var costs = this.ethings[this.things[i].id].protoPlacement.costs;
 							sizeCost += costs.size;
 							cropCost += costs.crop;
 							positionCost += costs.position;
 							columninessCost += costs.columniness;
+							worstTotalCost = Math.max(worstTotalCost, costs.totalCost);
 						}
 						score = (0 - sizeCost - cropCost - positionCost - columninessCost) / Math.max(1, this.nThingsPlaced);
+						
 						this.minScore = Math.min(this.minScore, score);
+						this.maxScore = Math.max(this.maxScore, score);
 						var k = this.solutions.length;
 						this.avgScore = (k * this.avgScore + score) / (k + 1);
+						var pj = this.solutions.length - 1
+							, pSol = pj >= 0 && this.solutions[pj]
+							, pIter = pSol ? pSol.info.iterations : 0
+							, pt = pSol ? pSol.info.t : 0
+							, pRunThroughs = pSol ? pSol.info.nRunThroughs : 0
+							, t = new Date().getTime() - this.startedPacking
+							;
 						this.solutions.push({
-							score: score, 
 							placements: this.getPlacements(),
+							score: score, 
+							hash: this.solutionHash,
 							info: {
+								score: score, 
+								hash: this.solutionHash,
 								iterations: this.iter0,
-								t: new Date().getTime(),
-								nRunThroughts: this.nRunThroughts,
+								t: t,
+								nRunThroughs: this.nRunThroughs,
 								sizeCost: sizeCost,
 								cropCost: cropCost,
 								positionCost: positionCost,
-								columninessCost: columninessCost
+								columninessCost: columninessCost,
+								dIterations: this.iter0 - pIter,
+								dt: t - pt,
+								iterPerMS: (this.iter0 - pIter) / (t - pt),
+								dRunThroughs: this.nRunThroughs - pRunThroughs,
+								worstTotalCost: worstTotalCost
 							}
 						});
 					}
@@ -788,13 +675,14 @@ define(['underscore', 'jquery'], function(_, $) {
 					ething.protoPlacement = null;					
 				}
 				this.nThingsPlaced = 0;
+				this.solutionHash = 0;
 				this.field.clear();
-				this.nRunThroughts++;
+				this.nRunThroughs++;
 			},
 			iterate: function() {
 				"Will either place one thing or remove a few things"
-				var places = this.field.findPlaces(this.maxLength)
-					, protoPlacements = this.findProtoPlacements(places)
+				var place = this.field.findPlace()
+					, protoPlacements = this.findProtoPlacements(place)
 					;
 				if(protoPlacements.length == 0) {
 					return this.finishRunThrough(false);
@@ -822,6 +710,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				pp.ething.placement = placement;
 				placement.protoPlacement = pp;
 				pp.ething.protoPlacement = pp;
+				this.solutionHash += pp.hash;
 				this.nThingsPlaced++;
 				if(this.nThingsPlaced == this.nThings) {
 					this.finishRunThrough(true);
@@ -839,7 +728,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				this.iter0 = 1
 				function loop() {
 
-					for(var batchi = 1, batchn = Math.min(1000, maxIterations - this.iter0); batchi < batchn; batchi++, this.iter0++) {
+					for(var batchi = 1, batchn = Math.min(1000, maxIterations - this.iter0); batchi <= batchn; batchi++, this.iter0++) {
 						var pns = this.solutions.length;
 						this.iterate();
 						var foundOne =  this.solutions.length > pns;
@@ -848,7 +737,7 @@ define(['underscore', 'jquery'], function(_, $) {
 							if(foundOne || t1 - lastStat > 500) {
 								lastStat = t1;
 								this.log('packing iteration: ' + this.iter0 + 
-										', nRunThroughts: ' + this.nRunThroughts + 
+										', nRunThroughs: ' + this.nRunThroughs + 
 										', nSolutions: ' + this.solutions.length + 
 										', nRepeatedSolutions: ' + this.nRepeatedSolutions + 
 										', best score: ' + _.max(_.pluck(this.solutions, 'score')) +
@@ -866,10 +755,14 @@ define(['underscore', 'jquery'], function(_, $) {
 							}
 						}
 					}
+					if(this.iter0 >= maxIterations) {
+						this.log('packing max iterations reached');
+						return cb(this.solutions.length);
+					}
 					setTimeout(loopm, 1);
 				}
-				var loopm = function() { loop.call(this); };
-				loopm();
+				var self = this, loopm = function() { loop.call(self); };
+				setTimeout(loopm, 1);
 			},
 			getPlacements: function() {
 				"returns dictionary of placements by thing id"
@@ -881,13 +774,15 @@ define(['underscore', 'jquery'], function(_, $) {
 				return placements;
 			},
 			getBestSolution: function() {
-				var p = null, s = -1e50;
+				var p = null, s = -1e50, besti = -1;
 				for(var i = this.solutions.length - 1; i >= 0; i--) {
 					if(this.solutions[i].score > s) {
+						besti = i;
 						s = this.solutions[i].score;
 						p = this.solutions[i].placements;
 					}
 				}
+				this.log('choosing solution ' + besti);
 				return p;
 			},
 			reportCosts: function() {
@@ -1177,10 +1072,10 @@ define(['underscore', 'jquery'], function(_, $) {
 				;
 			this.field = field;
 			this.packing = packing;
-			!!packing.pack(100 * 1000 /* max iterations */, 
-										10 * 1000 /* min iterations */, 
-										10 * 60 * 1000 /* timeout ms */,
-										21 /* max solutions to generate */,
+			!!packing.pack(10 * 1000 /* max iterations */, 
+										1 * 1000 /* min iterations */, 
+										5 * 1000 /* timeout ms */,
+										11 /* max solutions to generate */,
 					function(nSolutions) {
 						if(!nSolutions) {
 							throw new Error('Packing failure');
@@ -1365,7 +1260,7 @@ define(['underscore', 'jquery'], function(_, $) {
 					});
 					self.fieldWidth = fieldWidth;
 					self.positionRectangles(things, placements);
-					cb.call($field, this);
+					cb.call(this);
 				});
 			});
 		},
@@ -1377,6 +1272,62 @@ define(['underscore', 'jquery'], function(_, $) {
 				, h = Math.max(minH, Math.ceil(nThings * avgThingArea / w))
 				;
 			return h;
+		},
+		enableResizeHandler: function() {
+			if(this.resizeHandlerEnabled) {
+				return;
+			}
+			this.resizeHandlerEnabled = true;
+			var inlow0 = this.$field.width() //inout loop width state
+				, outlow0 = inlow0 //output loop width state
+				, gw = inlow0 //intra loop communication of intended width
+				, t0 = 0 //when input loop width last changed
+				, resizing = false //are we currently calculating a resize in the output loop
+				, inloto = null //input loop timeout
+				, delay = 300 //how long must window size be still before we trigger event?
+				, self = this
+				, outputLoop = _.bind(outputLoopf, this)
+				, inputLoop = _.bind(inputLoopf, this)
+				;
+			function outputLoopf() {
+				if(!resizing && outlow0 != gw) {
+					outlow0 = gw;
+					resizing = true;
+					console.log('calling planePack on resize');
+					this.layout(function() {
+						resizing = false;
+						console.log('finished planePack on resize!');
+						setTimeout(outputLoop, 1);
+					});
+				}
+			}
+
+			function inputLoopf() {
+				if(inloto) {
+					clearTimeout(inloto);
+					inloto = null;
+				}
+				if(!this.$field || !this.$field.closest('body').length) {
+					$(window).off('resize', inputLoop);
+					this.resizeHandlerEnabled = false;
+					return;
+				}
+				var ww1 = this.$field.width(), t1 = new Date().getTime();
+				if(t0 > 0 && inlow0 == ww1) {
+					if(t1 - t0 >= delay) {
+						gw = inlow0;
+						outputLoop();
+					} else {
+						setTimeout(inputLoop, delay - (t1 - t0))
+					}
+				} else if(inlow0 != ww1) {
+					t0 = t1;
+					inlow0 = ww1;
+					setTimeout(inputLoop, delay);
+				}
+			}
+
+			$(window).resize(inputLoop);
 		}
 	};
 
@@ -1387,7 +1338,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				opt = {};
 			}
 			opt = opt || {};
-			
+
 			var config = {};
 			_.each(Layout.prototype.configProps.split(' '), function(p) {
 				config[p] = opt.hasOwnProperty(p) ? opt[p] : Layout.prototype[p];
@@ -1398,8 +1349,13 @@ define(['underscore', 'jquery'], function(_, $) {
 				layout = new Layout(this, opt);
 				this.data(layout.cssPrefix + layout.dataLayoutRoot, layout);
 			}
-			
-			layout.layout(this, cb || opt.complete || function(){})
+			var self = this;
+			layout.layout(this, function() {
+				if(opt.resizable !== false) {
+					layout.enableResizeHandler()
+				}
+				cb && cb.call(self, this);
+			});
 		}
 	})
 	return Layout;
