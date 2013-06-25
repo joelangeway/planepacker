@@ -67,43 +67,46 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		_.each(images, function(image) { 
 			image.relativeSize = rsp == '0' ? 1 : 5 + image.tokens.length;
 		});
+		var sampleImages = _.shuffle(images).slice(0, 25);
 		console.log('drawing images markup');
-		$field.html(jhaml.templates.imageResults({images: images}));
+		$field.html(jhaml.templates.imageResults({images: sampleImages}));
 		go();
 	}
 
-	var ww0 = 0, wt0 = 0;
 	function startPolling() {
-		ww0 = $(window).width();
-		wt0 = 0;
+		var ww0 = $(window).width()
+			, resizing = false
+			;
 		function loop() {
-			var ww1 = $(window).width();
-			var now = new Date().getTime();
-			if(ww1 != ww0) {
-				wt0 = now;
+			var ww1;
+			if(!resizing && ww0 != (ww1 = $(window).width())) {
 				ww0 = ww1;
-			} else if(wt0 > 0 && wt0 + 1000 <= now ) {
+				resizing = true;
 				console.log('calling planePack on resize');
 				$('#field').planePack(function(layout) {
+					resizing = false;
 					console.log('finished planePack on resize!');
-					console.log(JSON.stringify(layout.packing.report(), null, '   '));
+					window.planePackerPackingReport = layout.packing.report();
+					console.log('set window.planePackerPackingReport');
+					setTimeout(loop, 1);
 				});
-				wt0 = 0;
 			}
-			setTimeout(loop, 400);
 		}
-		loop();
+		$(window).resize(loop);
 	}
 
 	function go() {
 		if(parsedLocation.query.mode == 'profile') {
 			profile();
+		} else if(parsedLocation.query.mode == 'preserve') {
+			preserving_profile();
 		} else {
 			var $field = $('#field');
 			console.log('calling planePack');
 			$field.planePack(function(layout) {
 				console.log('finished planePack!');
-				console.log(JSON.stringify(layout.packing.report(), null, '   '));
+				window.planePackerPackingReport = layout.packing.report();
+				console.log('set window.planePackerPackingReport');
 				startPolling();
 			});
 			console.log('called planePack');
@@ -147,6 +150,68 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			}
 			$field.removeData('ppLayoutRoot');
 			$field.children('.pp-able').each(function() { $(this).removeData('ppThing').removeClass('pp-layedout'); });
+			var t0 = new Date().getTime();
+			$field.planePack({animationDuration: 0}, function(layout) {
+				var t1 = new Date().getTime();
+				i++;
+				var report = layout.packing.report();
+				reports.push(report);
+				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0) + 'ms packing time: ' + report.duration);
+				loop(i);
+			});
+		}
+		loop(0);
+	}
+
+	function preserving_profile() {
+		var reports = window.planePackerProfilingReports = [];
+		var n = (parsedLocation.query.count || 10) - 0;
+		console.log('Beginning ' + n + ' preserving profiling runs');
+		var $field = $('#field');
+		function loop(i) {
+			if(i >= n) {
+				console.log('Done with ' + n + ' profiling runs');
+				function stat(p) {
+					var ps = p.split('.')
+						, rawValues = reports
+						, q
+						;
+					while(q = ps.shift()) {
+						rawValues = _.pluck(rawValues, q);
+					}
+					var values = _.filter(rawValues, function(v) { return v === +v && !isNaN(v); })
+						, n = values.length
+						, nans = rawValues.length - n
+						, ordered = _.sortBy(values, function(x) { return x;})
+						, median = (ordered[ Math.floor((n - 1) / 2) ] + ordered[ Math.ceil((n - 1) / 2) ]) / 2
+						, min = ordered[0]
+						, max = ordered[ ordered.length - 1]
+						, fsum = function(a) { return _.reduce(a, function(l, r) { return l + r; }, 0); }
+						, sum = fsum(ordered)
+						, sum2 = fsum(_.map(ordered, function(x) { return x * x; }))
+						, mean = sum / n
+						, variance = sum2 / n - mean * mean
+						, stddev = Math.sqrt(variance)
+						;
+					console.log('Stat: ' + p + ' ' + min + '  <  ' + median + ' ~ ' + mean + ' +- ' + stddev + '  <  ' + max + '   NANS: ' + nans);
+				}
+				stat('duration');
+				stat('iterations');
+				stat('iterationPerMs');
+				stat('nClears');
+				stat('relativeSizeCorrelation');
+				stat('columniness');
+				stat('costs.complexity.avg');
+				stat('costs.crop.avg');
+				stat('costs.size.avg');
+				stat('costs.position.avg');
+				stat('costs.fail.avg');
+				stat('costs.columniness.avg');
+				stat('costs.totalCost.avg');
+				stat('costs.worseCase.avg');
+				return;
+			}
+			$field.css('margin-right', i % 2 ? '' : '50px');
 			var t0 = new Date().getTime();
 			$field.planePack({animationDuration: 0}, function(layout) {
 				var t1 = new Date().getTime();

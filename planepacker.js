@@ -1,5 +1,5 @@
 /*
- * layouts.js
+ * planepacker.js
  */
 
 var window;
@@ -220,6 +220,68 @@ define(['underscore', 'jquery'], function(_, $) {
 				if(y1 < this.fH) checkX(y1);
 				return _.values(placements);
 			},
+			getAdjacentFeatures: function(x0, y0, x1, y1) {
+				"returns array of hashcodes of surrounding placements, invarient under many translations"
+				var x, y, c, lb, a, feats = new Array(6);
+				//decimal magic numbers are arbitrary primes, they must merely be unique to the attribute they encode
+				//hex magic numbers are masks to keep us in the realm of ints
+
+				//how far to ledge?
+				x = x1;
+				lb = this.lbs[x0];
+				while(x < this.fW && this.lbs[x] == lb) {
+					x++;
+				}
+				a = 0x3fffffff & (4367 * (x - x1));
+				feats[0] = a;
+
+				//left ledge?
+				x = x0 - 1;
+				lb = x >= 0 && this.lbs[x];
+				do {
+					x--;
+				} while(x >= 0 && this.lbs[x] == lb);
+				a = 0x3fffffff & (4387 * (x - x1));
+				feats[1] = a;
+
+				//western north parent
+				c = y0 > 0 && this.cells[x0 * this.fH + y0 - 1];
+				if(c) {
+					a = 0x3fffffff & (4409 * ( 431 * (c.x1 - x0) + 467 * c.w + 517 * c.h ) );
+				} else {
+					a = 4409;
+				}
+				feats[2] = a;
+
+				//easter north parent
+				c = y0 > 0 && this.cells[(x1 - 1) * this.fH + y0 - 1];
+				if(c) {
+					a = 0x3fffffff & (4451 * ( 431 * (c.x1 - x1) + 467 * c.w + 517 * c.h ) );
+				} else {
+					a = 4451;
+				}
+				feats[3] = a;
+
+				//northern west neighbor
+				c = x0 > 0 && this.cells[(x0 - 1) * this.fH + y0];
+				if(c) {
+					a = 0x3fffffff & (4493 * ( 431 * (c.y1 - y0) + 467 * c.w + 517 * c.h ) );
+				} else {
+					a = 4493;
+				}
+				feats[4] = a;
+
+				//southern west neighbor
+				c = x0 > 0 && this.cells[(x0 - 1) * this.fH + y1 - 1];
+				if(c) {
+					a = 0x3fffffff & (4541 * ( 431 * (c.y1 - y1) + 467 * c.w + 517 * c.h ) );
+				} else {
+					a = 4541;
+				}
+				feats[5] = a;
+
+				return feats;
+			},
 			recursiveUnplace: function(placements) {
 				var closed = {};
 				_.each(placements, function(placements) { closed[ placements.thing.id ] = true; });
@@ -246,14 +308,24 @@ define(['underscore', 'jquery'], function(_, $) {
 				return placements;
 			},
 			computeComplexityOfPlacement: function(x0, y0, x1, y1) {
-				var c = 0.0;
+				var c = 0.0, d;
 				if(x0 > 0) {
-					c -= this.sq(this.lbs[x0 - 1] - this.lbs[x0]);
-					c += this.sq(this.lbs[x0 - 1] - y1);
+					if(x0 == 1) { return 1e50; }
+					var lb1 = this.lbs[x0 - 1], lb2 = this.lbs[x0 - 2];
+					if(lb1 < y1 && lb1 < lb2) { return 1e50; }
+					d = lb1 - y0;
+					c -= d * d;
+					d = lb1 - y1;
+					c += d * d;
 				}
 				if(x1 < this.fW) {
-					c -= this.sq(this.lbs[x1] - this.lbs[x1]);
-					c += this.sq(this.lbs[x1] - y1);
+					if(x1 + 1 == this.fW) { return 1e50; }
+					var lb1 = this.lbs[x1], lb2 = this.lbs[x1 + 1];
+					if(lb1 < y1 && lb1 < lb2) { return 1e50; }
+					d = lb1 - y0;
+					c -= d * d;
+					d = lb1 - y1;
+					c += d * d;
 				}
 				return c;
 			},
@@ -296,6 +368,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			computeColumniness: function() {
 				var colClosed = {}, rowClosed = {}, colTotal = 0, rowTotal = 0;
+				//this only works if placements are ordered in the order they were placed, but let's keep it here for reference
 				_.each(this.placements, function(placement, thingId) {
 					if(!colClosed[thingId]) {
 						var colLen = 0;
@@ -325,7 +398,33 @@ define(['underscore', 'jquery'], function(_, $) {
 					}
 				}, this);
 				return colTotal + rowTotal;
+			},
+			computeDeltaColumniness: function(x0, y0, x1, y1) {
+				var p, cLen, dCol = 0, cLen_1;
+				cLen = 0;
+				p = y0 > 0 && this.cells[x0 * this.fH + y0 - 1];
+				while(p && p.x0 == x0 && p.x1 == x1) {
+					cLen++;
+					p = p.y0 > 0 && this.cells[x0 * this.fH + p.y0 - 1];
+				}
+				if(cLen) {
+					cLen_1 = cLen - 1;
+					dCol += cLen * cLen * cLen - cLen_1 * cLen_1 * cLen_1
+				}
+
+				cLen = 0;
+				p = x0 > 0 && this.cells[(x0 - 1) * this.fH + y0];
+				while(p && p.y0 == y0 && p.y1 == y1) {
+					cLen++;
+					p = p.x0 > 0 && this.cells[(p.x0 - 1) * this.fH + y0];
+				}
+				if(cLen) {
+					cLen_1 = cLen - 1;
+					dCol += cLen * cLen * cLen - cLen_1 * cLen_1 * cLen_1
+				}
+				return dCol;
 			}
+
 		}
 		return LayoutField;
 	})();
@@ -338,14 +437,17 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 8.0 //how much we care about getting relatvie sizes correct
+				size: 3.0 //how much we care about getting relatvie sizes correct
 				, crop: 3.0 //getting crop correct
-				, preserve: 2.0 //preserving the position of things when re-laying-out
+				, preserve: 10.0 //preserving the position of things when re-laying-out
 				, special: 10.0 //how much we care about special requests
+				, columniness: 8.0 //how much do we penalize things forming rows and columns
+				
+				, dampenAesthetics: 0.25  //how much attention we pay to aesthetics when searching for solutions, good aesthetics show up in the success factor
+
 				, complexity: 5.0 //how hard do we try to keep the problem manageable
-				, mix: 0.0 //how much do we care about not looking just like pinterest
 				, fail: 20.0 //how much do we avoid placements that previously failed to complete
-				, success : 1.0
+				, success : 0.5 //how much do we count score of previous successes with a feature
 			};
 
 			this.remainingRelativeSize = 0;
@@ -354,90 +456,110 @@ define(['underscore', 'jquery'], function(_, $) {
 			this.thingSizes = []; //tuples of thing and size ordered to optimize search stategy
 			this.maxWidth = 0;
 			this.nThingsPlaced = 0;
+			this.nThings = this.things.length;
 
-			this.featureCounts = {}; //map of placement hashes to count of times a partial solution succeeses or failed when incorperating this placement
+			this.featureCounts = new Array(1 << 20); //map of placement hashes to count of times a partial solution succeeses or failed when incorperating this placement
 
-			var samplePlaces = [
-				{x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1},
-				{x0: this.field.fW - 1, y0: 0, x1: this.field.fW, y1: 1, w: 1, h: 1},
-				{x0: 0, y0: this.goalFieldHeight - 1, x1: 1, y1: this.goalFieldHeight, w: 1, h: 1},
-				{x0: this.field.fW - 1, y0: this.goalFieldHeight - 1, x1: this.field.fW, y1: this.goalFieldHeight, w: 1, h: 1}
-			];
+			this.closedSolutions = {};
+			this.solutions = []; //collection of solutions found thus far
+			this.minScore = 0;
+			this.avgScore = 0;
+			this.iter0 = 0; //count of iterations thus far
+			this.nRunThroughts = 0;
+			this.nRepeatedSolutions = 0;
+			
+			function precompute() {
+				var samplePlaces = [
+					{x0: 0, y0: 0, x1: 1, y1: 1, w: 1, h: 1},
+					{x0: this.field.fW - 1, y0: 0, x1: this.field.fW, y1: 1, w: 1, h: 1},
+					{x0: 0, y0: this.goalFieldHeight - 1, x1: 1, y1: this.goalFieldHeight, w: 1, h: 1},
+					{x0: this.field.fW - 1, y0: this.goalFieldHeight - 1, x1: this.field.fW, y1: this.goalFieldHeight, w: 1, h: 1}
+				];
 
-			_.each(things, function(thing) {
-				this.remainingRelativeSize += thing.relativeSize;
-			}, this);
-			_.each(things, function(thing) {
-				
-				var ething = {
-					thing: thing
-					, id: thing.id
-					, pp: thing.placement || null//previous placement to preserver
-					, sp: thing.specialPlacement || null //special placement instructions
-					, maxCost: 0.0 //the worst possible cost of placing this thing
-					, placed: false
-					, placement: null
-				};
-
-				this.ethings[ ething.id ] = ething;
-
-				var tssizes = _.map(thing.sizes, function(size) {
-					this.maxWidth = Math.max(this.maxWidth, size.w, size.h);
-					var sizeCost = this.priceSize(ething, size, samplePlaces[0]);
-					var cropCost = this.priceCrop(ething, size, samplePlaces[0]);
+				_.each(things, function(thing) {
+					this.remainingRelativeSize += thing.relativeSize;
+				}, this);
+				_.each(things, function(thing) {
 					
-					return {
-							ething: ething, size: size, 
-							sizeCost: sizeCost, cropCost: cropCost, sizeAndCropCost: sizeCost + cropCost 
+					var ething = {
+						thing: thing
+						, id: thing.id
+						, pp: thing.placement || null//previous placement to preserver
+						, sp: thing.specialPlacement || null //special placement instructions
+						, maxCost: 0.0 //the worst possible cost of placing this thing
+						, placed: false
+						, placement: null
 					};
+
+					this.ethings[ ething.id ] = ething;
+
+					var minSizeCost = 1e9, minCropCost = 1e9;
+					var tssizes = _.map(thing.sizes, function(size) {
+						this.maxWidth = Math.max(this.maxWidth, size.w, size.h);
+						var rawSizeCost = this.priceSize(ething, size, samplePlaces[0]);
+						var rawCropCost = this.priceCrop(ething, size, samplePlaces[0]);
+						minSizeCost = Math.min(minSizeCost, rawSizeCost);
+						minCropCost = Math.min(minCropCost, rawCropCost);
+						return {
+								ething: ething, size: size, 
+								rawSizeCost: rawSizeCost, 
+								rawCropCost: rawCropCost
+						};
+					}, this);
+					_.each(tssizes, function(ts) {
+						ts.sizeCost = ts.rawSizeCost - minSizeCost;
+						ts.cropCost = ts.rawCropCost - minCropCost;
+						ts.sizeAndCropCost = ts.sizeCost + ts.cropCost;
+					}, this);
+					tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 10);
+					this.thingSizes.push.apply(this.thingSizes, tssizes);
+
+					thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
 				}, this);
-				tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 10);
-				this.thingSizes.push.apply(this.thingSizes, tssizes);
 
-				thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
-			}, this);
+				//sort thing sizes in order of descending height
+				this.thingSizes.sort(function(ts1, ts2) { return ts2.size.h - ts1.size.h; });
 
-			//sort thing sizes in order of descending height
-			this.thingSizes.sort(function(ts1, ts2) { return ts2.size.h - ts1.size.h; });
+				//for each thing, calculate the total worst possible cost so that we 
+				// can call that a gain when we place the thing, that way we are eager 
+				// to make good placements instead of scornful of risky ones, otherwise
+				// we'd never be able to get something in its special spot
+				_.each(this.ethings, function(ething) {
+					var thing = ething.thing
+						, maxCropCost = 0.0
+						, maxSizeCost = 0.0
+						, maxPositionCost = 0.0
+						;
+					_.each(thing.sizes, function(size) {
+						maxCropCost = Math.max(maxCropCost, this.priceCrop(ething, size, samplePlaces[0]) );
+						maxSizeCost = Math.max(maxSizeCost, this.priceSize(ething, size, samplePlaces[0]) );
+					}, this);
+					var sampleSize = thing.sizes[0];
 
-			//for each thing, calculate the total worst possible cost so that we 
-			// can call that a gain when we place the thing, that way we are eager 
-			// to make good placements instead of scornful of risky ones, otherwise
-			// we'd never be able to get something in its special spot
-			_.each(this.ethings, function(ething) {
-				var thing = ething.thing
-					, maxCropCost = 0.0
-					, maxSizeCost = 0.0
-					, maxPositionCost = 0.0
-					;
-				_.each(thing.sizes, function(size) {
-					maxCropCost = Math.max(maxCropCost, this.priceCrop(ething, size, samplePlaces[0]) );
-					maxSizeCost = Math.max(maxSizeCost, this.priceSize(ething, size, samplePlaces[0]) );
+					if(ething.sp) {
+						ething.positionCostWeight = this.weights.special;
+						ething.positionCostCx = ething.sp.x0 + ething.sp.w / 2;
+						ething.positionCostCy = ething.sp.y0 + ething.sp.h / 2;
+					} else if(ething.pp) {
+						ething.positionCostWeight = this.weights.preserve;
+						ething.positionCostCx = ething.pp.x0 + ething.pp.w / 2;
+						ething.positionCostCy = ething.pp.y0 + ething.pp.h / 2;
+					} else {
+						ething.positionCostWeight = 0;
+						ething.positionCostCx = 0;
+						ething.positionCostCy = 0;
+					}
+					_.each(samplePlaces, function(place) {
+						maxPositionCost = Math.max(maxPositionCost, this.pricePosition(ething, sampleSize, place) );
+					}, this);
+					ething.maxCost = maxCropCost + maxSizeCost + maxPositionCost;
 				}, this);
-				var sampleSize = thing.sizes[0];
-
-				if(ething.sp) {
-					ething.positionCostWeight = this.weights.special;
-					ething.positionCostCx = ething.sp.x0 + ething.sp.w / 2;
-					ething.positionCostCy = ething.sp.y0 + ething.sp.h / 2;
-				} else if(ething.pp) {
-					ething.positionCostWeight = this.weights.preserve;
-					ething.positionCostCx = ething.pp.x0 + ething.pp.w / 2;
-					ething.positionCostCy = ething.pp.y0 + ething.pp.h / 2;
-				} else {
-					ething.positionCostWeight = 0;
-					ething.positionCostCx = 0;
-					ething.positionCostCy = 0;
-				}
-				_.each(samplePlaces, function(place) {
-					maxPositionCost = Math.max(maxPositionCost, this.pricePosition(ething, sampleSize, place) );
-				}, this);
-				ething.maxCost = maxCropCost + maxSizeCost + maxPositionCost;
-			}, this);
+			}
+			precompute.call(this);
 		}
 
 		Packing.prototype = {
-			sq: function(x) { 
+			sq: function(x) {
 				return x * x; 
 			},
 			log: function() {
@@ -476,54 +598,60 @@ define(['underscore', 'jquery'], function(_, $) {
 					var scx = ething.sp.x0 + ething.sp.w / 2
 						, scy = ething.sp.y0 + ething.sp.h / 2
 						;
-					return this.weights.special * (sq(scx - cx) + sq(scy - cy));
-				}
-				else if(ething.pp) {
+					return this.weights.special * ( (scx - cx) * (scx - cx) + (scy - cy) * (scy - cy) );
+				} else if(ething.pp) {
 					var pcx = ething.pp.x0 + ething.pp.w / 2
 						, pcy = ething.pp.y0 + ething.pp.h / 2
 						;
-					return this.weights.preserve * (sq(pcx - cx) + sq(pcy - cy));
+					return this.weights.preserve * ( (pcx - cx) * (pcx - cx) + (pcy - cy) * (pcy - cy) );
 				} else {
 					return 0;
 				}
 			},
-			priceComplexity: function(ething, size, place) {
-				return this.weights.complexity * this.field.computeComplexityOfPlacement(
-													place.x0, place.y0, place.x0 + size.w, place.y0 + size.h);
-			},
-			priceMixiness: function(ething, size, place) {
-				return -this.weights.mix * this.field.computeMixinessOfPlacement(
-													place.x0, place.y0, place.x0 + size.w, place.y0 + size.h);
-			},
-			pricePreviousFailures: function(ething, size, place) {
-				var pHash = 0x000fffff & this.field.hashPlacement(place.x0, place.y0, size.w, size.h);
-				var feat = this.featureCounts[pHash];
-				if(!feat) {
-					return 0;
-				}
-				var p = feat.successCount, f = feat.failureCount, n = p + f;
-				if(feat.failureCount < feat.successCount) {
-					return -this.weights.success * p / n;
-				} else {
-					return this.weights.fail * (f + 0.5) / (p + 0.5)
-				}
-			},
-			scorePlacement: function(ething, size, place, thingSize) {
-				var costs = {crop: 0, size: 0, position: 0, complexity: 0, mix: 0, fail: 0, totalCost: 0, worseCase: 0, score: 0}
+			scorePlacement: function(ething, size, place, thingSize, protoPlacement) {
+				var costs = {crop: 0, size: 0, position: 0, complexity: 0, fail: 0, success: 0, columniness: 0, totalCost: 0, worseCase: 0, score: 0}
 					, cost = 0
+					, x0 = place.x0, y0 = place.y0, w = size.w, h = size.h
 					;
 				cost += costs.crop = thingSize.cropCost;
 				cost += costs.size = thingSize.sizeCost;
-				cost += costs.position = ething.positionCostWeight ? 
-						(ething.positionCostWeight * (	this.sq( place.x0 + size.w / 2 - ething.positionCostCx ) + 
-														this.sq( place.y0 + size.h / 2 - ething.positionCostCy ) )) : 0;
 
-				cost += costs.complexity = this.priceComplexity(ething, size, place);
-				//cost += costs.mix = this.priceMixiness(ething, size, place);
-				cost += costs.fail = this.pricePreviousFailures(ething, size, place);
+				var dx = x0 + w / 2 - ething.positionCostCx, dy = y0 + h / 2 - ething.positionCostCy;
+				cost += costs.position = ething.positionCostWeight ? 
+						(ething.positionCostWeight * ( dx * dx + dy * dy ) ) : 0;
+				
+				cost += costs.columniness = this.weights.columniness * this.field.computeDeltaColumniness(x0, y0, w, h);
+				
+				cost *= this.weights.dampenAesthetics;
+
+				cost += costs.complexity = this.weights.complexity * this.field.computeComplexityOfPlacement(x0, y0, w, h);
+				
+				var pfcost = 0, sscost = 0;
+				var hashes = this.field.getAdjacentFeatures(x0, y0, w, h);
+				var pHash = this.field.hashPlacement(x0, y0, w, h);
+				//hashes.push(pHash);
+				hashes = [pHash];
+				protoPlacement.featureHashes = hashes;
+				var priorFaiure = (this.nRunThroughts - this.solutions.length + 0.5) / (0.5 + this.solutions.length);
+				var successWeight = 0;
+				for(var i = hashes.length - 1; i >= 0; i--) {
+					var feat = this.featureCounts[0x000fffff & hashes[i]];
+					if(!feat) {
+						continue;
+					}
+					var p = feat.successCount, f = feat.failureCount, n = p + f;
+					pfcost += f > p && ((f + 0.5) / (0.5 + p));
+					sscost += feat.successCount * (feat.score - this.avgScore);
+					successWeight += feat.successCount;
+				}
+				var nFeats = Math.max(1, hashes.length);
+				cost += costs.fail = this.weights.fail * pfcost / nFeats;
+				cost += costs.success = -this.weights.success * sscost / Math.max(1, successWeight);
+
 				costs.totalCost = cost;
 				costs.worseCase = ething.maxCost;
-				costs.score = ething.maxCost - cost;
+				//costs.score = ething.maxCost - cost;
+				costs.score = 0 - cost;
 				return costs;
 			},
 			findProtoPlacements: function(places) {
@@ -538,145 +666,144 @@ define(['underscore', 'jquery'], function(_, $) {
 					; 
 				//throw new Error('break!');
 
-				var placeItemsInOrder = false;
-
-				if(placeItemsInOrder) {
-					var ti = 0
-						, tn = this.things.length
-						, thing, ething 
+				while(tsi < tsn) {
+					var thingSize = this.thingSizes[tsi]
+						, ething = thingSize.ething
+						, thing = ething.thing
+						, size = thingSize.size
+						, place = places[pi]
 						;
-					for(ti = 0; ti < tn; ti++) {
-						thing = this.things[ti];
-						ething = this.ethings[ thing.id ];
-						if(!ething.placed) {
-							break;
+					if(ething.placed) {
+						//don't place the thing twice
+						tsi++;
+					} else if(size.h > place.h) {
+						//we can't fit by height, maybe a shorter thingSize will work
+						tsi++;
+					} else if(pi + 1 < pn && places[pi + 1].h >= size.h) {
+						//we can make the place shorter and still fit, so do it to maximize availible width
+						pi++;
+					} else {
+						//we are now on the widest place by which this thing fits by height, 
+						//if it also fits by width then it is a valid placement
+						if(size.w <= place.w) {
+							protoPlacements.push({ething: ething, thing: thing, size: size, place: place, thingSize: thingSize,
+													featureHashes: null, costs: null, score: 0, p: 0});
 						}
-					}
-					if(ti >= tn) {
-						return [];
-					}
-					var sizes = thing.sizes
-						, si = 0
-						, sn = sizes.length
-						;
-					while(si < sn) {
-						var size = sizes[si]
-							, place = places[pi]
-							;
-						if(size.h > place.h) {
-							//we can't fit by height, maybe a shorter size will work
-							si++;
-						} else if(pi + 1 < pn && places[pi + 1].h >= size.h) {
-							//we can make the place shorter and still fit, so do it to maximize availible width
-							pi++;
-						} else {
-							//we are now on the widest place by which this thing fits by height, 
-							//if it also fits by width then it is a valid placement
-							if(size.w <= place.w) {
-								protoPlacements.push({ething: ething, thing: thing, size: size, place: place, costs: null, score: 0, p: 0});
-							}
-							//whether we fit or not, this size thing is done being considered
-							si++;
-						}
-					}
-				} else {
-					while(tsi < tsn) {
-						var thingSize = this.thingSizes[tsi]
-							, ething = thingSize.ething
-							, thing = ething.thing
-							, size = thingSize.size
-							, place = places[pi]
-							;
-						if(ething.placed) {
-							//don't place the thing twice
-							tsi++;
-						} else if(size.h > place.h) {
-							//we can't fit by height, maybe a shorter thingSize will work
-							tsi++;
-						} else if(pi + 1 < pn && places[pi + 1].h >= size.h) {
-							//we can make the place shorter and still fit, so do it to maximize availible width
-							pi++;
-						} else {
-							//we are now on the widest place by which this thing fits by height, 
-							//if it also fits by width then it is a valid placement
-							if(size.w <= place.w) {
-								protoPlacements.push({ething: ething, thing: thing, size: size, place: place, thingSize: thingSize});
-							}
-							//whether we fit or not, this size thing is done being considered
-							tsi++;
-						}
-
+						//whether we fit or not, this size thing is done being considered
+						tsi++;
 					}
 				}
 				return protoPlacements;
 			},
 			costToPBase: Math.pow(2.0, 1.0 / 1.0), //every 1 points of score is a factor of two in liklihood of placement 
 			scoreProtoPlacements: function(protoPlacements) {
-				//spent 625ms out of 1323ms inside this function before fixing it to do less transendental
-				//changed to 485ms out of 1123ms
-
 				var totP = 0.0, ppi, pp, r, ppn = protoPlacements.length, maxScore = -1e50;
 				for(ppi = 0; ppi < ppn; ppi++) {
 					pp = protoPlacements[ppi];
-					pp.costs = this.scorePlacement(pp.ething, pp.size, pp.place, pp.thingSize);
+					pp.costs = this.scorePlacement(pp.ething, pp.size, pp.place, pp.thingSize, pp);
 					pp.score = pp.costs.score;
 					maxScore = Math.max(maxScore, pp.score);
 				}
-				var minP = 1e-6, minScore = Math.log(minP) / Math.log(this.costToPBase);
+				var minP = 1e-12, minScore = Math.log(minP) / Math.log(this.costToPBase);
 				var scaleScore = Math.log(this.costToPBase);
-				var pps = [];
+				var ppj = 0;
 				for(ppi = 0; ppi < ppn; ppi++) {
 					var pp = protoPlacements[ppi]
 						, score = pp.score -= maxScore
 						;
 					if(score >= minScore) {
 						totP += pp.p = Math.exp(scaleScore * score);
-						pps.push(pp);
+						protoPlacements[ppj++] = pp;
 					}
 				}
+				protoPlacements.length = ppj;
 				if(isNaN(totP))
 					throw new Error('totP is NaN!');
-				return {totP: totP, protoPlacements: pps};
+				return totP;
 			},
-			bail: function() {
-				"Current partial solution doesn't work. Clear the field."
+			finishRunThrough: function(success) {
+				"Current partial solution doesn't work, or it did, learn from it. Clear the field."
+				
+				var score = 0;
+				if(success) {
+					var closed = this.closedSolutions[ this.field.hash ];
+					if(closed) {
+						this.nRepeatedSolutions++;
+					} else {
+						this.closedSolutions[ this.field.hash ] = true;
+						var sizeCost = 0, cropCost = 0, positionCost = 0, columninessCost = 0;
+						for(var i = this.things.length - 1; i >= 0; i--) {
+							var costs = this.ethings[this.things[i].id].protoPlacement.costs;
+							sizeCost += costs.size;
+							cropCost += costs.crop;
+							positionCost += costs.position;
+							columninessCost += costs.columniness;
+						}
+						score = (0 - sizeCost - cropCost - positionCost - columninessCost) / Math.max(1, this.nThingsPlaced);
+						this.minScore = Math.min(this.minScore, score);
+						var k = this.solutions.length;
+						this.avgScore = (k * this.avgScore + score) / (k + 1);
+						this.solutions.push({
+							score: score, 
+							placements: this.getPlacements(),
+							info: {
+								iterations: this.iter0,
+								t: new Date().getTime(),
+								nRunThroughts: this.nRunThroughts,
+								sizeCost: sizeCost,
+								cropCost: cropCost,
+								positionCost: positionCost,
+								columninessCost: columninessCost
+							}
+						});
+					}
+				}
+
 				var uncoveredPlacements = this.field.getUncoveredPlacements();
 				var allPlacements = this.field.getAllPlacements();
 				for(var thingId in allPlacements) {
 					var placement = allPlacements[thingId];
-					var pHash = 0x000fffff & placement.hash;
-					var feat = this.featureCounts[pHash] || 
-									( this.featureCounts[pHash] = {
-										successCount: 0, failureCount: 0, 
-										x0: placement.x0, y0: placement.y0, w: placement.w, h: placement.h } );
-					if(thingId in uncoveredPlacements) {
-						feat.failureCount++;
-					} else {
-						//feat.successCount++;
-					}
 					var ething = this.ethings[thingId];
+					if(!closed) {
+						var hashes = ething.protoPlacement.featureHashes;
+						for(var i = hashes.length - 1; i >= 0; i--) {
+							var j = 0x000fffff & hashes[i];
+							var feat = this.featureCounts[j] || 
+											( this.featureCounts[j] = {
+												successCount: 0, failureCount: 0, score: 0,
+												x0: placement.x0, y0: placement.y0, w: placement.w, h: placement.h } );
+							if(closed) {
+								//noop, just don't train again
+							} else if(success) {
+								var sc = feat.successCount, sc1 = sc + 1;
+								feat.score = (sc * feat.score + score) / sc1;
+								feat.successCount = sc1;
+							} else if(thingId in uncoveredPlacements) {
+								feat.failureCount++;
+							}
+						}
+					}
 					ething.placed = false;
 					ething.placement = null;
 					ething.protoPlacement = null;					
 				}
 				this.nThingsPlaced = 0;
 				this.field.clear();
+				this.nRunThroughts++;
 			},
 			iterate: function() {
 				"Will either place one thing or remove a few things"
 				var places = this.field.findPlaces(this.maxLength)
-					, _protoPlacements = this.findProtoPlacements(places)
+					, protoPlacements = this.findProtoPlacements(places)
 					;
-				if(_protoPlacements.length == 0) {
-					return this.bail();
+				if(protoPlacements.length == 0) {
+					return this.finishRunThrough(false);
 				}
-				var sppr = this.scoreProtoPlacements(_protoPlacements) //will splice some protoPlacements out of array because they were too improbable
-					, totP = sppr.totP
-					, protoPlacements = sppr.protoPlacements
+				var totP = this.scoreProtoPlacements(protoPlacements) //will splice some protoPlacements out of array because they were too improbable
 					, ppn = protoPlacements.length
 					;
 				if(ppn == 0) {
-					return this.bail();
+					return this.finishRunThrough(false);
 				}
 				var ppi, pp, r;
 				
@@ -693,60 +820,75 @@ define(['underscore', 'jquery'], function(_, $) {
 				var placement = this.field.place(pp.thing, pp.size, pp.place);
 				pp.ething.placed = true;
 				pp.ething.placement = placement;
+				placement.protoPlacement = pp;
 				pp.ething.protoPlacement = pp;
 				this.nThingsPlaced++;
+				if(this.nThingsPlaced == this.nThings) {
+					this.finishRunThrough(true);
+				}
 			},
-			pack: function(maxIterations) {
-				var mostThingPlaced = 0
-					, mostThingPlacedIter = 0
-					, nThings = this.things.length
-					, t0 = new Date().getTime()
-					, self = this
-					, milestones = [{t: t0, iter: 0, n:0}]
-					, iter0, nClears = 0, totThingsCleared = 0
-					;
-				this.packingReport = {};
-				function beforeReturn(msg) {
-					var t1 = new Date().getTime();
-					self.packingReport.duration = (t1 - t0);
-					self.packingReport.iterations = iter0;
-					self.packingReport.iterationPerMs = iter0 / (t1 - t0);
-					self.packingReport.milestones = milestones;
-					self.packingReport.nClears = nClears;
-					self.packingReport.totThingsCleared = totThingsCleared;
-					self.packingReport.avgThingsCleared = totThingsCleared / nClears;
 
-					self.log('packing took ' + (t1 - t0) + 'ms, msg: ' + msg)
-				}
+			pack: function(maxIterations, minIterations, maxTime, maxSolutions, cb) {
+				minIterations = minIterations || 0;
+				var t0 = new Date().getTime()
+					, lastStat = t0
+					;
+				this.startedPacking = t0;
+				this.packingReport = {};
 				this.log('started packing');
-				for(iter0 = 1; iter0 <= maxIterations; iter0++) {
-					var prevNThingsPlaced = this.nThingsPlaced;
-					this.iterate();
-					if(this.nThingsPlaced == nThings) {
-						milestones.push({t: new Date().getTime(), iter: iter0, n: nThings});
-						beforeReturn('success after ' + iter0 + ' iterations');
-						return true;
+				this.iter0 = 1
+				function loop() {
+
+					for(var batchi = 1, batchn = Math.min(1000, maxIterations - this.iter0); batchi < batchn; batchi++, this.iter0++) {
+						var pns = this.solutions.length;
+						this.iterate();
+						var foundOne =  this.solutions.length > pns;
+						if(foundOne || this.iter0 % 1000 == 0) {
+							var t1 = new Date().getTime();
+							if(foundOne || t1 - lastStat > 500) {
+								lastStat = t1;
+								this.log('packing iteration: ' + this.iter0 + 
+										', nRunThroughts: ' + this.nRunThroughts + 
+										', nSolutions: ' + this.solutions.length + 
+										', nRepeatedSolutions: ' + this.nRepeatedSolutions + 
+										', best score: ' + _.max(_.pluck(this.solutions, 'score')) +
+										', minScore: ' + this.minScore +
+										', avgScore: ' + this.avgScore +
+									'');
+							}
+							if(this.iter0 > minIterations && maxTime && t1 - t0 > maxTime) {
+								this.log('packing timeout');
+								return cb(this.solutions.length);
+							}
+							if(this.iter0 > minIterations && maxSolutions && this.solutions.length >= maxSolutions) {
+								this.log('packing max solutions reached');
+								return cb(this.solutions.length);
+							}
+						}
 					}
-					if(this.nThingsPlaced > mostThingPlaced) {
-						milestones.push({t: new Date().getTime(), iter: iter0, n: this.nThingsPlaced});
-						mostThingPlaced = this.nThingsPlaced;
-						mostThingPlacedIter = iter0;
-					} else if( this.nThingsPlaced == 0 && prevNThingsPlaced > 0) {
-						nClears++;
-						totThingsCleared += prevNThingsPlaced;
-					}
+					setTimeout(loopm, 1);
 				}
-				beforeReturn('failed to converge after ' + maxIterations + ' iterations');
-				return false;
+				var loopm = function() { loop.call(this); };
+				loopm();
 			},
 			getPlacements: function() {
 				"returns dictionary of placements by thing id"
-				return _.reduce(this.ethings, function(placements, ething) {
-					if(ething.placed) {
-						placements[ething.id] = ething.placement;
+				var placements = {};
+				for(var i = this.things.length - 1; i >= 0; i--) {
+					var thingId = this.things[i].id;
+					placements[thingId] = this.ethings[thingId].placement;
+				}
+				return placements;
+			},
+			getBestSolution: function() {
+				var p = null, s = -1e50;
+				for(var i = this.solutions.length - 1; i >= 0; i--) {
+					if(this.solutions[i].score > s) {
+						s = this.solutions[i].score;
+						p = this.solutions[i].placements;
 					}
-					return placements;
-				}, {});
+				}
+				return p;
 			},
 			reportCosts: function() {
 				function avgBag(bag, sample) {
@@ -802,8 +944,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			},
 			measureSuccessRelativeSize: function() {
 				var ss = _.compact( _.map(this.ethings, function(ething) {
-						return ething.placement && { relative: ething.thing.relativeSize, actual: Math.min(ething.placement.w, ething.placement.h), ri: 0, ai: 0 };
+						return !ething.sp && ething.placement && { relative: ething.thing.relativeSize, actual: Math.min(ething.placement.w, ething.placement.h), ri: 0, ai: 0 };
 					}));
+
 				function assignRank(list, vp, rp) {
 					var lastValue = false, rank = 0;
 					_.chain(list).sortBy(vp).each(function(s, i) { 
@@ -816,10 +959,8 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 				assignRank(ss, 'relative', 'ri');
 				assignRank(ss, 'actual', 'ai');
+
 				return this.correlation(ss, 'ri', 'ai');
-			},
-			measureSuccessColumniness: function() {
-				return this.field.computeColumniness();
 			},
 			report: function() {
 				var report = this.packingReport;
@@ -830,7 +971,6 @@ define(['underscore', 'jquery'], function(_, $) {
 				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - (f.failureCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
 				
 				report.relativeSizeCorrelation = this.measureSuccessRelativeSize();
-				report.columniness = this.measureSuccessColumniness();
 
 				return report;
 			}
@@ -885,10 +1025,12 @@ define(['underscore', 'jquery'], function(_, $) {
 			return $(window).height();
 		},
 		fetchNativeSize: function(src, cb) {
-			var $img = $('<img class="js-layouts-cacheimg">').appendTo(this.getSandbox());
+			var $img = $(document.createElement('img')).addClass(this.cssPrefix + 'cacheimg').appendTo(this.getSandbox());
 			$img
 				.load(function() {
-					cb($img.width(), $img.height());
+					var w = $img.width(), h = $img.height();
+					$img.remove();
+					cb(w, h);
 				})
 				.attr('src', src);
 		},
@@ -1027,21 +1169,27 @@ define(['underscore', 'jquery'], function(_, $) {
 			}
 			check();
 		},
-		packRectangles: function(things, fieldWidth, goalFieldHeight) {
+		packRectangles: function(things, fieldWidth, goalFieldHeight, cb) {
 			var field = new Layout.Field(fieldWidth, Math.floor(1.5 * goalFieldHeight + this.maxLength))
 				, packing = new Layout.Packing(field, things, goalFieldHeight)
-				, maxIterPerItem = 200
-				, didItWork
+				, maxIterPerItem = 1000
+				, self = this
 				;
-			didItWork = packing.pack(Math.max(10000, things.length * maxIterPerItem));
 			this.field = field;
 			this.packing = packing;
-			if(!didItWork) {
-				throw new Error('Packing failure');
-			}
-			return packing.getPlacements();
+			!!packing.pack(100 * 1000 /* max iterations */, 
+										10 * 1000 /* min iterations */, 
+										10 * 60 * 1000 /* timeout ms */,
+										21 /* max solutions to generate */,
+					function(nSolutions) {
+						if(!nSolutions) {
+							throw new Error('Packing failure');
+						}
+						cb.call(self, packing.getBestSolution());	
+					}
+			);
 		},
-		positionRectangles: function(things) {
+		positionRectangles: function(things, placements) {
 			var stepsize = this.padding + this.gridSize, maxHeight = 0;
 			
 			var tweenInterval = 30, minTweenDelay = 5, log = this.log;
@@ -1065,7 +1213,7 @@ define(['underscore', 'jquery'], function(_, $) {
 					frames++;
 					var ta = new Date().getTime(), tb = tac + ta;
 					if(tb >= t1) {
-						log('Tweening last frame of ' + frames + ' in ' + duration + 'ms, last frame took ' + tac + 'ms');
+						//log('Tweening last frame of ' + frames + ' in ' + duration + 'ms, last frame took ' + tac + 'ms');
 						return f(1.0, 1.0);
 					}
 					var x = Math.max(0, Math.min(1, (tb - t0) / duration))
@@ -1089,8 +1237,13 @@ define(['underscore', 'jquery'], function(_, $) {
 			var anis = [], fades = [];
 			_.each(things, function(thing) {
 				var $thing = thing.$el
-					, placement = thing.placement
-					, left = stepsize * placement.x0
+					, placement = placements[thing.id]
+					;
+				if(!placement) {
+					thing.$el.removeClass(this.cssPrefix + this.cssLayoutDone);
+					return;
+				}
+				var left = stepsize * placement.x0
 					, top = stepsize * placement.y0
 					, width = this.pixelLength(placement.w)
 					, height = this.pixelLength(placement.h)
@@ -1203,17 +1356,17 @@ define(['underscore', 'jquery'], function(_, $) {
 					self.scalePreviousPlacements(things, this.fieldWidth, fieldWidth);
 				}
 
-				var placements = self.packRectangles(things, fieldWidth, goalFieldHeight);
-			
-				$field.removeClass(this.cssPrefix + this.cssComputing);
-				$field.removeClass(this.cssPrefix + this.cssBusy);
-			
-				_.each(things, function(thing) {
-					thing.placement = placements[thing.id];
+				self.packRectangles(things, fieldWidth, goalFieldHeight, function(placements){
+					$field.removeClass(this.cssPrefix + this.cssComputing);
+					$field.removeClass(this.cssPrefix + this.cssBusy);
+				
+					_.each(things, function(thing) {
+						thing.placement = placements[thing.id];
+					});
+					self.fieldWidth = fieldWidth;
+					self.positionRectangles(things, placements);
+					cb.call($field, this);
 				});
-				self.fieldWidth = fieldWidth;
-				self.positionRectangles(things);
-				cb.call($field, this);
 			});
 		},
 		estimateGridHeight: function(nThings, width, height) {
