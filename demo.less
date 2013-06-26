@@ -1,0 +1,35 @@
+.imageResult {
+	//already position absolute by virtue of being pp-able
+	img.imageResultImg {
+
+	}
+
+	.links {
+		position: absolute;
+		height: auto;
+		bottom: 0;
+		.bg {
+			position: absolute;
+			left: 0; width: 100%; top: 0; height: 100%;
+			background-color: black;
+			opacity: 0.5;
+		}
+		.link {
+			position: relative;
+			white-space: nowrap;
+			a, a:visited {
+				color: #c0c0f0;
+			}
+		}
+		display: none;
+	}
+}
+
+.imageResult:hover .links { 
+	display: block; 
+}
+
+#field.pp-computing {
+	background-color: #aaa;
+	opacity: 0.5;
+}
