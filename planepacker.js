@@ -306,16 +306,16 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 3.0 //how much we care about getting relatvie sizes correct
+				size: 5.0 //how much we care about getting relatvie sizes correct
 				, crop: 2.0 //getting crop correct
-				, preserve: 12.0 //preserving the position of things when re-laying-out
+				, preserve: 10.0 //preserving the position of things when re-laying-out
 				, special: 20.0 //how much we care about special requests
 				, columniness: 10.0 //how much do we penalize things forming rows and columns
 				
 				, dampenAesthetics: 0.70  //how much attention we pay to aesthetics when searching for solutions, good aesthetics show up in the success factor
 
-				, maxPositionError: 50.0 //inflict severe penalty if we place something more than this many grid units from goal
-				, maxPositionPenalty: 10000.0
+				, maxPositionError: 10000.0 //inflict severe penalty if we place something more than this many grid units from goal
+				, maxPositionPenalty: 0.0
 
 				, complexity: 3.0 //how hard do we try to keep the problem manageable
 				, fail: 20.0 //how much do we avoid placements that previously failed to complete
@@ -387,7 +387,7 @@ define(['underscore', 'jquery'], function(_, $) {
 						ts.sizeAndCropCost = ts.sizeCost + ts.cropCost;
 					}, this);
 					var pc = tssizes.length;
-					tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 10);
+					tssizes = _.sortBy(tssizes, 'sizeAndCropCost').slice(0, 20);
 					totalThingSizesTrimmed += pc - tssizes.length;
 					this.thingSizes.push.apply(this.thingSizes, tssizes);
 
@@ -1072,9 +1072,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				;
 			this.field = field;
 			this.packing = packing;
-			!!packing.pack(10 * 1000 /* max iterations */, 
+			!!packing.pack(30 * 1000 /* max iterations */, 
 										1 * 1000 /* min iterations */, 
-										5 * 1000 /* timeout ms */,
+										10 * 1000 /* timeout ms */,
 										11 /* max solutions to generate */,
 					function(nSolutions) {
 						if(!nSolutions) {
@@ -1207,6 +1207,10 @@ define(['underscore', 'jquery'], function(_, $) {
 		},
 		scalePreviousPlacements: function(things, previousFieldWidth, currentFieldWidth) {
 			var s = currentFieldWidth / previousFieldWidth;
+			if(currentFieldWidth < 10) {
+				_.each(things, function(thing) { thing.placement = null; });
+				return;
+			}
 			_.each(things, function(thing) {
 				if(thing.placement) {
 					thing.placement.x0 *= s;
