@@ -91,6 +91,144 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		}
 	}
 
+	_.mixin({
+		ffMapper: function(s) {
+			if(_.isString(s)) {
+				var ss = _.compact(s.split('.')), n = ss.length;
+				return function(v) {
+					for(var i = 0; i < n && v; i++) {
+						v = v[ ss[i] ];
+					}
+					return v;
+				}
+			} else {
+				return s;
+			}
+		},
+		avg: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			var total = 0.0, n = 0;
+			_.each(list, function(v) {
+				total += v;
+				n++;
+			});
+			return total / Math.max(1, n);
+		},
+		stddev: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			var m = _.avg(list)
+				, n = 0
+				, totalDiff2 = 0.0
+				;
+			_.each(list, function(v) {
+				var d = v - m;
+				totalDiff2 += d * d;
+				n++;
+			});
+			return Math.sqrt(totalDiff2 / Math.max(1, n));
+		},
+		stat: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			return { min: _.min(list), avg: _.avg(list), stddev: _.stddev(list), max: _.max(list) };
+		}
+	})
+	function digestReport(report) {
+		var solutions = report.solutions
+			, n = solutions.length
+			, infos = _.pluck(solutions, 'info')
+			, lastInfo = infos[n - 1]
+			, timePacking = lastInfo.t
+			, totalIterations = lastInfo.iterations
+			, totalRunThroughs = lastInfo.nRunThroughs
+			, bestScore = _.max(_.pluck(infos, 'score'))
+			, bestInfo = _.find(infos, function(info) { return info.score == bestScore; })
+			, bestIndex = _.indexOf(infos, bestInfo)
+			, stat = function(p) { return _.stat(infos, p); }
+			;
+		return {
+			wallClockTime: report.wallClockTime,
+			timePacking: timePacking,
+			nSolutions: n,
+			nRunThroughs: totalRunThroughs,
+			iterations: totalIterations,
+			runThroughsPerSolution: totalRunThroughs / n,
+			iterationsPerRunThrough: totalIterations / totalRunThroughs,
+			iterationsPerSolution: totalIterations / n,
+			iterationPerMs: totalIterations / timePacking,
+			runThroughsPerMs: totalRunThroughs / timePacking,
+			first: {
+				score: infos[0].score,
+				t: infos[0].t,
+				nRunThroughs: infos[0].nRunThroughs,
+				iterations: infos[0].iterations,
+				sizeCost: infos[0].sizeCost,
+				cropCost: infos[0].cropCost,
+				positionCost: infos[0].positionCost,
+				columninessCost: infos[0].columninessCost,
+				worstTotalCost: infos[0].worstTotalCost
+			},
+			best: {
+				score: bestInfo.score,
+				index: bestIndex,
+				t: bestInfo.t,
+				nRunThroughs: bestInfo.nRunThroughs,
+				iterations: bestInfo.iterations,
+				sizeCost: bestInfo.sizeCost,
+				cropCost: bestInfo.cropCost,
+				positionCost: bestInfo.positionCost,
+				columninessCost: bestInfo.columninessCost,
+				worstTotalCost: bestInfo.worstTotalCost
+			},
+			all: {
+				score: stat('score'),
+				dt: stat('dt'),
+				dIterations: stat('dIterations'),
+				dRunThroughs: stat('dRunThroughs'),
+				iterPerMS: stat('iterPerMS'),
+				
+				sizeCost: stat('sizeCost'),
+				cropCost: stat('cropCost'),
+				positionCost: stat('positionCost'),
+				columninessCost: stat('columninessCost'),
+				worstTotalCost: stat('worstTotalCost')
+			}
+		}
+	}
+
+	function aggregateDigests(digests) {
+		var ps1 = ('wallClockTime timePacking nSolutions nRunThroughs iterations runThroughsPerSolution iterationsPerRunThrough ' + 
+					'iterationsPerSolution iterationPerMs runThroughsPerMs').split(' ')
+			, ps2 = 'score index t nRunThroughs iterations sizeCost cropCost positionCost columninessCost worstTotalCost'.split(' ')
+			, ps3 = 'score dt dRunThroughs dIterations iterPerMS sizeCost cropCost positionCost columninessCost worstTotalCost'.split(' ')
+			, agg = {}
+			;
+		_.each(ps1, function(p) {
+			agg[p] = _.stat(digests, p);
+		});
+		agg.all = {};
+		_.each(ps3, function(p) {
+			agg.all[p] = _.stat(digests, 'all.' + p + '.avg');
+		});
+		agg.first = {};
+		_.each(ps2, function(p) {
+			agg.first[p] = _.stat(digests, 'first.' + p);
+		});
+		agg.best = {};
+		_.each(ps2, function(p) {
+			agg.best[p] = _.stat(digests, 'best.' + p);
+		});
+		return agg;
+	}
+
 	function profile() {
 		var reports = window.planePackerProfilingReports = [];
 		var n = (parsedLocation.query.count || 10) - 0;
@@ -99,31 +237,7 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		function loop(i) {
 			if(i >= n) {
 				console.log('Done with ' + n + ' profiling runs');
-				function stat(p) {
-					var rawValues = _.pluck(reports, p)
-						, values = _.filter(rawValues, function(v) { return v === +v && !isNaN(v); })
-						, n = values.length
-						, nans = rawValues.length - n
-						, ordered = _.sortBy(values, function(x) { return x;})
-						, median = (ordered[ Math.floor((n - 1) / 2) ] + ordered[ Math.ceil((n - 1) / 2) ]) / 2
-						, min = ordered[0]
-						, max = ordered[ ordered.length - 1]
-						, fsum = function(a) { return _.reduce(a, function(l, r) { return l + r; }, 0); }
-						, sum = fsum(ordered)
-						, sum2 = fsum(_.map(ordered, function(x) { return x * x; }))
-						, mean = sum / n
-						, variance = sum2 / n - mean * mean
-						, stddev = Math.sqrt(variance)
-						;
-					console.log('Stat: ' + p + ' ' + min + '  <  ' + median + ' ~ ' + mean + ' +- ' + stddev + '  <  ' + max + '   NANS: ' + nans);
-				}
-				stat('duration');
-				stat('iterations');
-				stat('iterationPerMs');
-				stat('nClears');
-				stat('relativeSizeCorrelation');
-				stat('columniness');
-
+				console.log( JSON.stringify( aggregateDigests( _.map(reports, digestReport)), null, '  ') );
 				return;
 			}
 			$field.removeData('ppLayoutRoot');
@@ -132,9 +246,9 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			$field.planePack({animationDuration: 0}, function(layout) {
 				var t1 = new Date().getTime();
 				i++;
-				var report = layout.packing.report();
+				var report = {wallClockTime: (t1 - t0), solutions: layout.packing.solutions}
 				reports.push(report);
-				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0) + 'ms packing time: ' + report.duration);
+				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0));
 				loop(i);
 			});
 		}
@@ -149,54 +263,21 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		function loop(i) {
 			if(i >= n) {
 				console.log('Done with ' + n + ' profiling runs');
-				function stat(p) {
-					var ps = p.split('.')
-						, rawValues = reports
-						, q
-						;
-					while(q = ps.shift()) {
-						rawValues = _.pluck(rawValues, q);
-					}
-					var values = _.filter(rawValues, function(v) { return v === +v && !isNaN(v); })
-						, n = values.length
-						, nans = rawValues.length - n
-						, ordered = _.sortBy(values, function(x) { return x;})
-						, median = (ordered[ Math.floor((n - 1) / 2) ] + ordered[ Math.ceil((n - 1) / 2) ]) / 2
-						, min = ordered[0]
-						, max = ordered[ ordered.length - 1]
-						, fsum = function(a) { return _.reduce(a, function(l, r) { return l + r; }, 0); }
-						, sum = fsum(ordered)
-						, sum2 = fsum(_.map(ordered, function(x) { return x * x; }))
-						, mean = sum / n
-						, variance = sum2 / n - mean * mean
-						, stddev = Math.sqrt(variance)
-						;
-					console.log('Stat: ' + p + ' ' + min + '  <  ' + median + ' ~ ' + mean + ' +- ' + stddev + '  <  ' + max + '   NANS: ' + nans);
-				}
-				stat('duration');
-				stat('iterations');
-				stat('iterationPerMs');
-				stat('nClears');
-				stat('relativeSizeCorrelation');
-				stat('columniness');
-				stat('costs.complexity.avg');
-				stat('costs.crop.avg');
-				stat('costs.size.avg');
-				stat('costs.position.avg');
-				stat('costs.fail.avg');
-				stat('costs.columniness.avg');
-				stat('costs.totalCost.avg');
-				stat('costs.worseCase.avg');
+				console.log( JSON.stringify( aggregateDigests( _.map(reports, digestReport)), null, '  ') );
 				return;
 			}
-			$field.css('margin-right', i % 2 ? '' : '50px');
+			if(i % 3 == 0) {
+				$field.removeData('ppLayoutRoot');
+				$field.children('.pp-able').each(function() { $(this).removeData('ppThing').removeClass('pp-layedout'); });
+			}
+			$field.css('margin-right', i % 2 ? '' : '100px');
 			var t0 = new Date().getTime();
 			$field.planePack({animationDuration: 0}, function(layout) {
 				var t1 = new Date().getTime();
 				i++;
-				var report = layout.packing.report();
+				var report = {wallClockTime: (t1 - t0), solutions: layout.packing.solutions}
 				reports.push(report);
-				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0) + 'ms packing time: ' + report.duration);
+				console.log('Finished run ' + i + ' wall clock time: ' + (t1 - t0));
 				loop(i);
 			});
 		}

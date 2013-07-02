@@ -33,8 +33,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			opt = $field;
 			$field = opt.$el || (opt.el && $(opt.el)) || null;
 		}
-		//we don't actually use this ... not sure if we ever will, we pass the $field in everywhere
-		this.$field = $field;
+		this.setField($field);
 		_.each(this.configProps.split(' '), function(p) {
 			this[p] = opt.hasOwnProperty(p) ? opt[p] : this[p];
 		}, this);
@@ -170,9 +169,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				if(y1 < this.fH) checkX(y1);
 				return _.values(placements);
 			},
-			getAdjacentFeatures: function(x0, y0, x1, y1) {
+			getAdjacentFeatures: function(x0, y0, x1, y1, feats) {
 				"returns array of hashcodes of surrounding placements, invarient under many translations"
-				var x, y, c, lb, a, feats = new Array(6);
+				var x, y, c, lb, a;
 				//decimal magic numbers are arbitrary primes, they must merely be unique to the attribute they encode
 				//hex magic numbers are masks to keep us in the realm of ints
 
@@ -183,7 +182,7 @@ define(['underscore', 'jquery'], function(_, $) {
 					x++;
 				}
 				a = 0x3fffffff & (4367 * (x - x1));
-				feats[0] = a;
+				feats.push(a);
 
 				//left ledge?
 				x = x0 - 1;
@@ -192,25 +191,26 @@ define(['underscore', 'jquery'], function(_, $) {
 					x--;
 				} while(x >= 0 && this.lbs[x] == lb);
 				a = 0x3fffffff & (4387 * (x - x1));
-				feats[1] = a;
+				feats.push(a);
 
-				//western north parent
+				//offset and size of neighbors:
+				//western north neighbor
 				c = y0 > 0 && this.cells[x0 * this.fH + y0 - 1];
 				if(c) {
 					a = 0x3fffffff & (4409 * ( 431 * (c.x1 - x0) + 467 * c.w + 517 * c.h ) );
 				} else {
 					a = 4409;
 				}
-				feats[2] = a;
+				feats.push(a);
 
-				//easter north parent
+				//easter north neighbor
 				c = y0 > 0 && this.cells[(x1 - 1) * this.fH + y0 - 1];
 				if(c) {
 					a = 0x3fffffff & (4451 * ( 431 * (c.x1 - x1) + 467 * c.w + 517 * c.h ) );
 				} else {
 					a = 4451;
 				}
-				feats[3] = a;
+				feats.push(a);
 
 				//northern west neighbor
 				c = x0 > 0 && this.cells[(x0 - 1) * this.fH + y0];
@@ -219,7 +219,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				} else {
 					a = 4493;
 				}
-				feats[4] = a;
+				feats.push(a);
 
 				//southern west neighbor
 				c = x0 > 0 && this.cells[(x0 - 1) * this.fH + y1 - 1];
@@ -228,9 +228,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				} else {
 					a = 4541;
 				}
-				feats[5] = a;
-
-				return feats;
+				feats.push(a);
 			},
 			computeComplexityOfPlacement: function(x0, y0, x1, y1) {
 				var c = 0.0, d;
@@ -306,7 +304,7 @@ define(['underscore', 'jquery'], function(_, $) {
 			//so the field is overallocated a bit, so we use goalFieldHeight to do estimates for appropriate sizing
 
 			this.weights = {
-				size: 5.0 //how much we care about getting relatvie sizes correct
+				size: 8.0 //how much we care about getting relatvie sizes correct
 				, crop: 2.0 //getting crop correct
 				, preserve: 10.0 //preserving the position of things when re-laying-out
 				, special: 20.0 //how much we care about special requests
@@ -518,9 +516,8 @@ define(['underscore', 'jquery'], function(_, $) {
 				cost += costs.complexity = this.weights.complexity * this.field.computeComplexityOfPlacement(x0, y0, x0 + w, y0 + h);
 				
 				var pfcost = 0, sscost = 0;
-				var hashes = this.field.getAdjacentFeatures(x0, y0, w, h);
-				//hashes.push(protoPlacement.hash);
-				hashes = [protoPlacement.hash];
+				var hashes = [protoPlacement.hash];
+				//this.field.getAdjacentFeatures(x0, y0, w, h, hashes);
 				protoPlacement.featureHashes = hashes;
 				var priorFaiure = (this.nRunThroughs - this.solutions.length + 0.5) / (0.5 + this.solutions.length);
 				var successWeight = 0;
@@ -537,6 +534,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				var nFeats = Math.max(1, hashes.length);
 				cost += costs.fail = this.weights.fail * pfcost / nFeats;
 				cost += costs.success = -this.weights.success * sscost / Math.max(1, successWeight);
+				protoPlacement.featureHashes = [];
+				// costs.fail = 0;
+				costs.success = 0;
 
 				if(isNaN(cost)) {
 					throw new Error('Numerical error');
@@ -591,9 +591,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			finishRunThrough: function(success) {
 				"Current partial solution doesn't work, or it did, learn from it. Clear the field."
 				
-				var score = 0;
+				var score = 0, closed = false;
 				if(success) {
-					var closed = this.closedSolutions[ this.solutionHash ];
+					closed = this.closedSolutions[ this.solutionHash ];
 					if(closed) {
 						this.nRepeatedSolutions++;
 					} else {
@@ -784,90 +784,6 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 				this.log('choosing solution ' + besti);
 				return p;
-			},
-			reportCosts: function() {
-				function avgBag(bag, sample) {
-					_.each(sample, function(v, p) {
-						if(!_.isNumber(v)) return;
-
-						var b = bag[p] || (bag[p] = {n: 0, x: 0, x2: 0, min: v, max: v});
-						b.n++;
-						b.x += v;
-						b.x2 += v * v;
-						b.min = Math.min(b.min, v);
-						b.max = Math.max(b.max, v);
-					});
-					return bag;
-				}
-				var report = {};
-				_.chain(this.ethings)
-							.pluck('protoPlacement')
-							.compact()
-							.pluck('costs')
-							.reduce(avgBag, {})
-							.each(function(tot, p) {
-								report[p] = { n: tot.n, 
-											avg: tot.x / tot.n, 
-											stddev: Math.sqrt(tot.x2 / tot.n - tot.x * tot.x / tot.n / tot.n ),
-											min: tot.min,
-											max: tot.max
-										};
-							});
-				return report;
-			},
-			correlation: function(list, ap, bp) {
-				var n = 0, ax = 0, bx = 0;
-				_.each(list, function(item) {
-					n++;
-					var av = item[ap] || 0, bv = item[bp] || 0;
-					ax += av;
-					bx += bv;
-				});
-				var am = ax / n, bm = bx / n
-					, ad = 0, bd = 0, abd = 0
-					;
-				_.each(list, function(item) {
-					var av = item[ap] || 0, bv = item[bp] || 0
-						adx = av - am, bdx = bv - bm
-						;
-					ad += adx * adx;
-					bd += bdx * bdx;
-					abd += adx * bdx;
-				});
-				var av = ad / n, bv = bd / n, abv = abd / n
-				return abv / Math.sqrt(av * bv);
-			},
-			measureSuccessRelativeSize: function() {
-				var ss = _.compact( _.map(this.ethings, function(ething) {
-						return !ething.sp && ething.placement && { relative: ething.thing.relativeSize, actual: Math.min(ething.placement.w, ething.placement.h), ri: 0, ai: 0 };
-					}));
-
-				function assignRank(list, vp, rp) {
-					var lastValue = false, rank = 0;
-					_.chain(list).sortBy(vp).each(function(s, i) { 
-						if(s[vp] !== lastValue) {
-							rank++;
-							lastValue = s[vp];
-						}
-						s[rp] = rank;
-					});
-				}
-				assignRank(ss, 'relative', 'ri');
-				assignRank(ss, 'actual', 'ai');
-
-				return this.correlation(ss, 'ri', 'ai');
-			},
-			report: function() {
-				var report = this.packingReport;
-				report.costs = this.reportCosts();
-				var feats = _.values(this.featureCounts);
-				report.mostFrequentFeatures = _.sortBy(feats, function(f) { return 0 - f.successCount - f.failureCount; }).slice(0, 10);
-				report.mostSucceedingFeatures = _.sortBy(feats, function(f) { return 0 - (f.successCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
-				report.mostFailingFeatures = _.sortBy(feats, function(f) { return 0 - (f.failureCount + 0.5) / (1.0 + f.successCount + f.failureCount); }).slice(0, 10);
-				
-				report.relativeSizeCorrelation = this.measureSuccessRelativeSize();
-
-				return report;
 			}
 		}
 		return Packing;
@@ -915,6 +831,17 @@ define(['underscore', 'jquery'], function(_, $) {
 			if(!$sb.length)
 				$sb = $('<div id="' + this.cssPrefix + 'sandbox"></div>').appendTo('body');
 			return $sb;
+		},
+		setField: function($field) {
+			if(this.$field) {
+				if(this.$field.data(this.cssPrefix + this.dataLayoutRoot) == this) {
+					this.$field.removeData(this.cssPrefix + this.dataLayoutRoot);
+				}
+			}
+			this.$field = $field;
+			if($field) {
+				$field.data(this.cssPrefix + this.dataLayoutRoot, this);
+			}
 		},
 		getViewportHeight: function() {
 			return $(window).height();
@@ -988,8 +915,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			}
 			return scales;
 		},
-		findThings: function($field) {
-			var things = []
+		findThings: function() {
+			var $field = this.$field
+				, things = []
 				, $things = $field.children('.' + this.cssPrefix + this.cssLayoutable)
 				, self = this
 				;
@@ -1222,14 +1150,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				}
 			});
 		},
-		layout: function($field, cb) {
-			if(cb === undefined) {
-				cb = $field;
-				$field = null;
-			}
-			if($field) {
-				this.$field = $field;
-			}
+		layout: function(cb) {
 			if(!this.$field) {
 				throw new Error('No layout field');
 			}
@@ -1311,7 +1232,7 @@ define(['underscore', 'jquery'], function(_, $) {
 					clearTimeout(inloto);
 					inloto = null;
 				}
-				if(!this.$field || !this.$field.closest('body').length) {
+				if(!this.$field || !this.$field.closest('body').length || this.$field.data(this.cssPrefix + this.dataLayoutRoot) != this) {
 					$(window).off('resize', inputLoop);
 					this.resizeHandlerEnabled = false;
 					return;
@@ -1351,10 +1272,9 @@ define(['underscore', 'jquery'], function(_, $) {
 			var layout = this.data(config.cssPrefix + config.dataLayoutRoot);
 			if(!layout) {
 				layout = new Layout(this, opt);
-				this.data(layout.cssPrefix + layout.dataLayoutRoot, layout);
 			}
 			var self = this;
-			layout.layout(this, function() {
+			layout.layout(function() {
 				if(opt.resizable !== false) {
 					layout.enableResizeHandler()
 				}
