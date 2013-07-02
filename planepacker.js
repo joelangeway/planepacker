@@ -309,6 +309,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				, preserve: 10.0 //preserving the position of things when re-laying-out
 				, special: 20.0 //how much we care about special requests
 				, columniness: 10.0 //how much do we penalize things forming rows and columns
+				, bigFirst: 5.0 //how much do we prefer to place big things first
 				
 				, dampenAesthetics: 0.70  //how much attention we pay to aesthetics when searching for solutions, good aesthetics show up in the success factor
 
@@ -317,7 +318,7 @@ define(['underscore', 'jquery'], function(_, $) {
 
 				, complexity: 3.0 //how hard do we try to keep the problem manageable
 				, fail: 20.0 //how much do we avoid placements that previously failed to complete
-				, success : 10.0 //how much do we count score of previous successes with a feature
+				, success : 0.0 //how much do we count score of previous successes with a feature, this actually hurts right now :(
 			};
 
 			this.remainingRelativeSize = 0;
@@ -390,6 +391,10 @@ define(['underscore', 'jquery'], function(_, $) {
 					this.thingSizes.push.apply(this.thingSizes, tssizes);
 
 					thing.sizes.sort(function(s1, s2) { return s2.h - s1.h; });
+				}, this);
+
+				_.chain(this.things).sortBy('relativeSize').each(function(thing, i) {
+					this.ethings[thing.id].relativeSizeRank = this.nThings - i - 1;
 				}, this);
 				
 				this.log('thingSizes.length=' + this.thingSizes.length + ', trimmed: ' + totalThingSizesTrimmed);
@@ -511,6 +516,9 @@ define(['underscore', 'jquery'], function(_, $) {
 				
 				cost += costs.columniness = this.weights.columniness * this.field.computeDeltaColumniness(x0, y0, x0 + w, y0 + h);
 				
+				var dOrder = ething.relativeSizeRank - this.nThingsPlaced;
+				cost += costs.relativeSizeRank = this.weights.bigFirst * dOrder * (1 + Math.abs(dOrder));
+
 				cost *= this.weights.dampenAesthetics;
 
 				cost += costs.complexity = this.weights.complexity * this.field.computeComplexityOfPlacement(x0, y0, x0 + w, y0 + h);
@@ -534,9 +542,10 @@ define(['underscore', 'jquery'], function(_, $) {
 				var nFeats = Math.max(1, hashes.length);
 				cost += costs.fail = this.weights.fail * pfcost / nFeats;
 				cost += costs.success = -this.weights.success * sscost / Math.max(1, successWeight);
-				protoPlacement.featureHashes = [];
+				if(costs.success < 0) throw new Error('Impossible');
+//				protoPlacement.featureHashes = [];
 				// costs.fail = 0;
-				costs.success = 0;
+//				costs.success = 0;
 
 				if(isNaN(cost)) {
 					throw new Error('Numerical error');
@@ -600,16 +609,18 @@ define(['underscore', 'jquery'], function(_, $) {
 						this.closedSolutions[ this.field.hash ] = true;
 						
 						//This gives the average score of each thing
-						var sizeCost = 0, cropCost = 0, positionCost = 0, columninessCost = 0, worstTotalCost = 0;
+						var sizeCost = 0, cropCost = 0, positionCost = 0, columninessCost = 0, bigFirstCost = 0, worstTotalCost = 0;
 						for(var i = this.things.length - 1; i >= 0; i--) {
-							var costs = this.ethings[this.things[i].id].protoPlacement.costs;
+							var ething = this.ethings[this.things[i].id];
+							var costs = ething.protoPlacement.costs;
 							sizeCost += costs.size;
 							cropCost += costs.crop;
 							positionCost += costs.position;
 							columninessCost += costs.columniness;
+							bigFirstCost += costs.relativeSizeRank;
 							worstTotalCost = Math.max(worstTotalCost, costs.totalCost);
 						}
-						score = (0 - sizeCost - cropCost - positionCost - columninessCost) / Math.max(1, this.nThingsPlaced);
+						score = (0 - sizeCost - cropCost - positionCost - columninessCost - bigFirstCost) / Math.max(1, this.nThingsPlaced);
 						
 						this.minScore = Math.min(this.minScore, score);
 						this.maxScore = Math.max(this.maxScore, score);
@@ -966,6 +977,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				} else
 					throw new Error('Bad layout type');
 				$thing.data(self.cssPrefix + 'thing', thing);
+				$thing.attr('data-' + self.cssPrefix + '-thing-id', thing.id);
 				return thing;
 			}
 			_.each($things, function(thingEl) {
@@ -1000,10 +1012,10 @@ define(['underscore', 'jquery'], function(_, $) {
 				;
 			this.field = field;
 			this.packing = packing;
-			!!packing.pack(30 * 1000 /* max iterations */, 
-										1 * 1000 /* min iterations */, 
+			!!packing.pack(100 * 1000 /* max iterations */, 
+										500 /* min iterations */, 
 										10 * 1000 /* timeout ms */,
-										11 /* max solutions to generate */,
+										15 /* max solutions to generate */,
 					function(nSolutions) {
 						if(!nSolutions) {
 							throw new Error('Packing failure');

@@ -67,6 +67,7 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		_.each(images, function(image) { 
 			image.relativeSize = rsp == '0' ? 1 : 5 + image.tokens.length;
 		});
+		images = _.sortBy(images, function(image) { return 0 - image.relativeSize; });
 		//var sampleImages = _.shuffle(images).slice(0, 25);
 		var sampleImages = images;
 		console.log('drawing images markup');
@@ -82,10 +83,14 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		} else {
 			var $field = $('#field');
 			console.log('calling planePack');
+			var t0 = new Date().getTime();
 			$field.planePack(function(layout) {
+				var t1 = new Date().getTime();
+				var report = {wallClockTime: (t1 - t0), solutions: layout.packing.solutions}
 				console.log('finished planePack!');
-				window.planePackerPackingReport = layout.packing.report();
-				console.log('set window.planePackerPackingReport');
+				window.planePackerPackingReport = report;
+				window.planePackerReportDigest = digestReport(report)
+				console.log('set window.planePackerPackingReport and planePackerReportDigest');
 			});
 			console.log('called planePack');
 		}
@@ -104,6 +109,13 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			} else {
 				return s;
 			}
+		},
+		sum: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			return _.reduce(list, function(a, b) { return a + b; }, 0);
 		},
 		avg: function(list, iter, context) {
 			if(iter) {
@@ -138,7 +150,39 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				iter = _.ffMapper(iter);
 				list = _.map(list, iter, context);
 			}
-			return { min: _.min(list), avg: _.avg(list), stddev: _.stddev(list), max: _.max(list) };
+			return { min: _.min(list), avg: _.avg(list), stddev: _.stddev(list), max: _.max(list), n: _.size(list) };
+		},
+		rstat: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			var n = _.sum(list, 'n');
+			var mean = _.sum( _.map(list, function(s) { return s.avg * s.n; })) / n;
+			var ex2 = _.sum( _.map(list, function(s) { return (s.avg * s.avg + s.stddev * s.stddev) * s.n; })) / n;
+			var v = ex2 - mean * mean
+				, stddev = Math.sqrt(v)
+				;
+			return { 
+				min: _.min(_.pluck(list, 'min')), 
+				avg: mean, 
+				stddev: stddev, 
+				max: _.max(_.pluck(list, 'max')), 
+				n: n
+			};
+		},
+		rstatbags: function(list, iter, context) {
+			if(iter) {
+				iter = _.ffMapper(iter);
+				list = _.map(list, iter, context);
+			}
+			var keys = _.keys(list[0])
+				, stats = _.reduce(keys, function(stats, key) {
+						stats[key] = _.rstat(list, key);
+						return stats;
+					}, {})
+				;
+			return stats;
 		}
 	})
 	function digestReport(report) {
@@ -154,6 +198,17 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			, bestIndex = _.indexOf(infos, bestInfo)
 			, stat = function(p) { return _.stat(infos, p); }
 			;
+		function statPerThingCosts(solution) {
+			var costss = _.pluck(_.pluck(solution.placements, 'protoPlacement'), 'costs')
+				, keys = _.keys(costss[0])
+				, stats = _.reduce(keys, function(stats, key) {
+						stats[key] = _.stat(costss, key);
+						return stats;
+					}, {})
+				;
+			return stats;
+		}
+
 		return {
 			wallClockTime: report.wallClockTime,
 			timePacking: timePacking,
@@ -167,6 +222,7 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 			runThroughsPerMs: totalRunThroughs / timePacking,
 			first: {
 				score: infos[0].score,
+				index: 0,
 				t: infos[0].t,
 				nRunThroughs: infos[0].nRunThroughs,
 				iterations: infos[0].iterations,
@@ -174,7 +230,8 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				cropCost: infos[0].cropCost,
 				positionCost: infos[0].positionCost,
 				columninessCost: infos[0].columninessCost,
-				worstTotalCost: infos[0].worstTotalCost
+				worstTotalCost: infos[0].worstTotalCost,
+				perThingCosts: statPerThingCosts(solutions[0])
 			},
 			best: {
 				score: bestInfo.score,
@@ -186,7 +243,8 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				cropCost: bestInfo.cropCost,
 				positionCost: bestInfo.positionCost,
 				columninessCost: bestInfo.columninessCost,
-				worstTotalCost: bestInfo.worstTotalCost
+				worstTotalCost: bestInfo.worstTotalCost,
+				perThingCosts: statPerThingCosts(solutions[bestIndex])
 			},
 			all: {
 				score: stat('score'),
@@ -199,7 +257,9 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 				cropCost: stat('cropCost'),
 				positionCost: stat('positionCost'),
 				columninessCost: stat('columninessCost'),
-				worstTotalCost: stat('worstTotalCost')
+				worstTotalCost: stat('worstTotalCost'),
+
+				perThingCosts: _.rstatbags(_.map(solutions, statPerThingCosts))
 			}
 		}
 	}
@@ -226,7 +286,20 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		_.each(ps2, function(p) {
 			agg.best[p] = _.stat(digests, 'best.' + p);
 		});
+		agg.all.perThingCosts = _.rstatbags(digests, 'best.perThingCosts');
 		return agg;
+	}
+
+	function printAggregateSummary(agg) {
+		function stat2str(stat) {
+			return stat.avg.toFixed(3) + ' +- ' + stat.stddev.toFixed(3) + ' (' + stat.min.toFixed(1) + ' < ' + stat.max.toFixed(1) + ')';
+		}
+		var fields = 'timePacking nSolutions nRunThroughs iterations iterationsPerSolution iterationPerMs best.score best.index'.split(' ');
+		var opt = '';
+		_.each(fields, function(field) {
+			opt += field + ': ' + stat2str(_.ffMapper(field)(agg)) + "\n";
+		});	
+		console.log(opt);
 	}
 
 	function profile() {
@@ -263,7 +336,10 @@ require(['jhaml', 'planepacker', 'underscore', 'jquery', 'less'], function(Jhaml
 		function loop(i) {
 			if(i >= n) {
 				console.log('Done with ' + n + ' profiling runs');
-				console.log( JSON.stringify( aggregateDigests( _.map(reports, digestReport)), null, '  ') );
+				var digests = window.planePackerReportDigests = _.map(reports, digestReport);
+				var agg = window.planePackerAggregateOfReportDigests = aggregateDigests( digests );
+				console.log('wrote globals: planePackerProfilingReports, planePackerReportDigests, and planePackerAggregateOfReportDigests');
+				printAggregateSummary(agg);
 				return;
 			}
 			if(i % 3 == 0) {
