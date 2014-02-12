@@ -867,7 +867,9 @@ define(['underscore', 'jquery'], function(_, $) {
 					cb2(w, h);
 				})
 				.attr('src', src);
-			setTimeout(cb2, 5000);
+			setTimeout(function() {
+				cb2(50, 50);
+			}, 5000);
 		},
 		enumerateScales: function(nativeWidth, nativeHeight, crops, padding, gridSize, minLength, maxLength) {
 			var scales = []
