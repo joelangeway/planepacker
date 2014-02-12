@@ -930,7 +930,7 @@ define(['underscore', 'jquery'], function(_, $) {
 				})
 				.attr('src', src);
 			setTimeout(function() {
-				cb2(50, 50);
+				cb2(200, 200);
 			}, 5000);
 		},
 		enumerateScales: function(nativeWidth, nativeHeight, crops, padding, gridSize, minLength, maxLength) {
