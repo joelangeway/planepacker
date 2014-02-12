@@ -920,14 +920,18 @@ define(['underscore', 'jquery'], function(_, $) {
 			return $(window).height();
 		},
 		fetchNativeSize: function(src, cb) {
+			var cb2 = _.once(cb);
 			var $img = $(document.createElement('img')).addClass(this.cssPrefix + 'cacheimg').appendTo(this.getSandbox());
 			$img
 				.load(function() {
 					var w = $img.width(), h = $img.height();
 					$img.remove();
-					cb(w, h);
+					cb2(w, h);
 				})
 				.attr('src', src);
+			setTimeout(function() {
+				cb2(50, 50);
+			}, 5000);
 		},
 		enumerateScales: function(nativeWidth, nativeHeight, crops, padding, gridSize, minLength, maxLength) {
 			var scales = []
